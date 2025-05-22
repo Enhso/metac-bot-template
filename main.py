@@ -25,7 +25,7 @@ from forecasting_tools import (
 logger = logging.getLogger(__name__)
 
 
-class TemplateForecaster(ForecastBot):
+class SelfCritiqueForecaster(ForecastBot):
     """
     This is a copy of the template bot for Q2 2025 Metaculus AI Tournament.
     The official bots on the leaderboard use AskNews in Q2.
@@ -58,7 +58,7 @@ class TemplateForecaster(ForecastBot):
     Additionally OpenRouter has large rate limits immediately on account creation
     """
 
-    _max_concurrent_questions = 2  # Set this to whatever works for your search-provider/ai-model rate limits
+    _max_concurrent_questions = 1  # Set this to whatever works for your search-provider/ai-model rate limits
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
     async def run_research(self, question: MetaculusQuestion) -> str:
@@ -296,22 +296,39 @@ if __name__ == "__main__":
         "test_questions",
     ], "Invalid run mode"
 
-    template_bot = TemplateForecaster(
+    template_bot = SelfCritiqueForecaster(
         research_reports_per_question=1,
         predictions_per_research_report=5,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
         folder_to_save_reports_to=None,
         skip_previously_forecasted_questions=True,
-        # llms={  # choose your model names or GeneralLlm llms here, otherwise defaults will be chosen for you
-        #     "default": GeneralLlm(
-        #         model="metaculus/anthropic/claude-3-5-sonnet-20241022",
-        #         temperature=0.3,
-        #         timeout=40,
-        #         allowed_tries=2,
-        #     ),
-        #     "summarizer": "openai/gpt-4o-mini",
-        # },
+        llms={
+            "initial_pred_llm": GeneralLlm(
+                model="metaculus/anthropic/claude-3-7-sonnet-latest",
+                temperature=0.3,
+                timeout=40,
+                allowed_tries=2,
+            ),
+            "critique_llm": GeneralLlm(
+                model="metaculus/anthropic/claude-3-7-sonnet-latest",
+                temperature=0.3,
+                timeout=40,
+                allowed_tries=2,
+            ),
+            "refined_pred_llm": GeneralLlm(
+                model="metaculus/anthropic/claude-3-7-sonnet-latest",
+                temperature=0.3,
+                timeout=40,
+                allowed_tries=2,
+            ),
+            "summarizer": GeneralLlm(
+                model="metaculus/openai/gpt-4.1",
+                temperature=0.3,
+                timeout=40,
+                allowed_tries=2,
+            ),
+        },
     )
 
     if run_mode == "tournament":
