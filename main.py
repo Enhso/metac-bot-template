@@ -18,12 +18,12 @@ from forecasting_tools import (
     PredictedOptionList,
     PredictionExtractor,
     ReasonedPrediction,
-    SmartSearcher,
     clean_indents,
 )
 
-logger = logging.getLogger(__name__)
+from asknews_sdk import AsyncAskNewsSDK
 
+logger = logging.getLogger(__name__)
 
 class SelfCritiqueForecaster(ForecastBot):
     """
@@ -60,6 +60,18 @@ class SelfCritiqueForecaster(ForecastBot):
 
     _max_concurrent_questions = 1  # Set this to whatever works for your search-provider/ai-model rate limits
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
+
+    async def generate_initial_prediction(self):
+        prompt = ""
+
+    async def _generate_adversarial_critique(self):
+        prompt = ""
+
+    async def _perform_targeted_search(self):
+        prompt = ""
+
+    async def _generate_refined_prediction(self):
+        prompt = ""
 
     async def run_research(self, question: MetaculusQuestion) -> str:
         async with self._concurrency_limiter:
@@ -305,13 +317,13 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=True,
         llms={
             "initial_pred_llm": GeneralLlm(
-                model="metaculus/anthropic/claude-3-7-sonnet-latest",
+                model="metaculus/openai/gpt-4.1",
                 temperature=0.3,
                 timeout=40,
                 allowed_tries=2,
             ),
             "critique_llm": GeneralLlm(
-                model="metaculus/anthropic/claude-3-7-sonnet-latest",
+                model="metaculus/openai/gpt-4.1",
                 temperature=0.3,
                 timeout=40,
                 allowed_tries=2,
