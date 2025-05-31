@@ -62,16 +62,28 @@ class SelfCritiqueForecaster(ForecastBot):
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
     async def generate_initial_prediction(self):
-        prompt = ""
+        prompt = clean_indents(
+            f"""
+            """
+        )
 
     async def _generate_adversarial_critique(self):
-        prompt = ""
+        prompt = clean_indents(
+            f"""
+            """
+        )
 
     async def _perform_targeted_search(self):
-        prompt = ""
+        prompt = clean_indents(
+            f"""
+            """
+        )
 
     async def _generate_refined_prediction(self):
-        prompt = ""
+        prompt = clean_indents(
+            f"""
+            """
+        )
 
     async def run_research(self, question: MetaculusQuestion) -> str:
         async with self._concurrency_limiter:
@@ -316,33 +328,44 @@ if __name__ == "__main__":
         folder_to_save_reports_to=None,
         skip_previously_forecasted_questions=True,
         llms={
+            "default": GeneralLlm(
+                model="metaculus/openai/gpt-4.1",
+                temperature=0.3,
+                timeout=40,
+                allowed_tries=2,
+                max_tokens=1024,
+            ),
             "initial_pred_llm": GeneralLlm(
                 model="metaculus/openai/gpt-4.1",
                 temperature=0.3,
                 timeout=40,
                 allowed_tries=2,
-                max_tokens=2048
+                max_tokens=2048,
             ),
             "critique_llm": GeneralLlm(
                 model="metaculus/openai/gpt-4.1",
                 temperature=0.3,
                 timeout=40,
                 allowed_tries=2,
-                max_tokens=2048
+                max_tokens=2048,
             ),
             "refined_pred_llm": GeneralLlm(
                 model="metaculus/anthropic/claude-3-7-sonnet-latest",
                 temperature=0.3,
                 timeout=80,
                 allowed_tries=2,
-                max_tokens=4096
+                max_tokens=6144,
+                thinking={
+                    "type": "enabled",
+                    "budget_tokens": 4096,
+                },
             ),
             "summarizer": GeneralLlm(
                 model="metaculus/openai/gpt-4.1",
                 temperature=0.3,
                 timeout=40,
                 allowed_tries=2,
-                max_tokens=2048
+                max_tokens=2048,
             ),
         },
     )
@@ -377,4 +400,4 @@ if __name__ == "__main__":
         forecast_reports = asyncio.run(
             bot_one.forecast_questions(questions, return_exceptions=True)
         )
-    TemplateForecaster.log_report_summary(forecast_reports)  # type: ignore
+    SelfCritiqueForecaster.log_report_summary(forecast_reports)
