@@ -117,7 +117,8 @@ class SelfCritiqueForecaster(ForecastBot):
         # WHY: We use the concurrency limiter here to manage costs and avoid rate limit errors,
         # as this entire block constitutes one "unit of work" for a single question.
         async with self._concurrency_limiter:
-            # STEP 1: Initial, broad research.
+            # === STEP 1: Initial, broad research. ===
+            logger.info(f"Starting self-critique process for: {question.page_url}")
             initial_research = ""
             if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
                 initial_research = await AskNewsSearcher().get_formatted_news_async(
@@ -125,31 +126,49 @@ class SelfCritiqueForecaster(ForecastBot):
                 )
             else:
                 logger.warning(
-                    f"No research provider found. Proceeding without initial research for URL {question.page_url}."
+                    f"No research provider found. Proceeding without initial research."
                 )
 
-            # STEP 2: Generate Initial Prediction
+            # WHY: This is a simple but effective way to handle rate limiting.
+            # We pause for a second after a burst of API calls to avoid being blocked.
+            await asyncio.sleep(1)
+
+            # === STEP 2: Generate Initial Prediction ===
             initial_prediction_text = await self._generate_initial_prediction(question, initial_research)
 
-            # # STEP 3: Generate Adversarial Critique
-            # critique_text = await self._generate_adversarial_critique(question, initial_prediction_text)
+            # === STEP 3: Generate Adversarial Critique ===
+            critique_text = await self._generate_adversarial_critique(question, initial_prediction_text)
+            logger.info("Critique generated. Now performing targeted search.")
 
-            # # STEP 4: Perform Targeted Search
-            # targeted_research = await self._perform_targeted_search(critique_text)
+            # === STEP 4: Perform Targeted Search ===
+            targeted_research = await self._perform_targeted_search(critique_text)
 
-            # # STEP 5: Generate Refined Prediction
-            # refined_prediction_text = await self._generate_refined_prediction(
-            #     question, initial_research, initial_prediction_text, critique_text, targeted_research
-            # )
+            # WHY: Pause again after our second set of API calls.
+            await asyncio.sleep(1)
+
+            # === STEP 5: Generate Refined Prediction ===
+            refined_prediction_text = await self._generate_refined_prediction(
+                question, initial_research, initial_prediction_text, critique_text, targeted_research
+            )
 
             # WHY: We combine all the steps into a single, comprehensive report.
-            # This report becomes the `research` input for the next stage and is
-            # ultimately saved in the `explanation` field of the ForecastReport,
-            # providing full transparency of the bot's reasoning process.
+            # This provides full transparency of the bot's reasoning process.
             full_report = f"""
 # ============== FORECASTING PROCESS REPORT ==============
-## 1. Initial Research
+## 1. Initial Broad Research
 {initial_research}
+
+## 2. Initial Prediction & Rationale
+{initial_prediction_text}
+
+## 3. Adversarial Critique
+{critique_text}
+
+## 4. Targeted Research Based on Critique
+{targeted_research}
+
+## 5. Final Refined Prediction & Rationale
+{refined_prediction_text}
 # ================= END OF REPORT =================
 """
             logger.info(
@@ -160,170 +179,52 @@ class SelfCritiqueForecaster(ForecastBot):
     async def _run_forecast_on_binary(
         self, question: BinaryQuestion, research: str
     ) -> ReasonedPrediction[float]:
-        prompt = clean_indents(
-            f"""
-            You are a professional forecaster interviewing for a job.
-
-            Your interview question is:
-            {question.question_text}
-
-            Question background:
-            {question.background_info}
-
-
-            This question's outcome will be determined by the specific criteria below. These criteria have not yet been satisfied:
-            {question.resolution_criteria}
-
-            {question.fine_print}
-
-
-            Your research assistant says:
-            {research}
-
-            Today is {datetime.now().strftime("%Y-%m-%d")}.
-
-            Before answering you write:
-            (a) The time left until the outcome to the question is known.
-            (b) The status quo outcome if nothing changed.
-            (c) A brief description of a scenario that results in a No outcome.
-            (d) A brief description of a scenario that results in a Yes outcome.
-
-            You write your rationale remembering that good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time.
-
-            The last thing you write is your final answer as: "Probability: ZZ%", 0-100
-            """
-        )
-        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        # WHY: The 'research' variable now contains the entire report from our
+        # self-critique loop. The final, refined prediction and rationale are
+        # at the end of this string. The hard work of reasoning is already done.
+        # We simply extract the final answer. The full report becomes the reasoning.
         prediction: float = PredictionExtractor.extract_last_percentage_value(
-            reasoning, max_prediction=1, min_prediction=0
+            research, max_prediction=1, min_prediction=0
         )
         logger.info(
-            f"Forecasted URL {question.page_url} as {prediction} with reasoning:\n{reasoning}"
+            f"Extracted final prediction for URL {question.page_url}: {prediction}"
         )
         return ReasonedPrediction(
-            prediction_value=prediction, reasoning=reasoning
+            prediction_value=prediction, reasoning=research # The whole report is the reasoning
         )
 
     async def _run_forecast_on_multiple_choice(
         self, question: MultipleChoiceQuestion, research: str
     ) -> ReasonedPrediction[PredictedOptionList]:
-        prompt = clean_indents(
-            f"""
-            You are a professional forecaster interviewing for a job.
-
-            Your interview question is:
-            {question.question_text}
-
-            The options are: {question.options}
-
-
-            Background:
-            {question.background_info}
-
-            {question.resolution_criteria}
-
-            {question.fine_print}
-
-
-            Your research assistant says:
-            {research}
-
-            Today is {datetime.now().strftime("%Y-%m-%d")}.
-
-            Before answering you write:
-            (a) The time left until the outcome to the question is known.
-            (b) The status quo outcome if nothing changed.
-            (c) A description of an scenario that results in an unexpected outcome.
-
-            You write your rationale remembering that (1) good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time, and (2) good forecasters leave some moderate probability on most options to account for unexpected outcomes.
-
-            The last thing you write is your final probabilities for the N options in this order {question.options} as:
-            Option_A: Probability_A
-            Option_B: Probability_B
-            ...
-            Option_N: Probability_N
-            """
-        )
-        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        # WHY: Same logic as the binary method. We rely on the refined prediction step
+        # to have formatted the answer correctly for the extractor to find it.
         prediction: PredictedOptionList = (
             PredictionExtractor.extract_option_list_with_percentage_afterwards(
-                reasoning, question.options
+                research, question.options
             )
         )
         logger.info(
-            f"Forecasted URL {question.page_url} as {prediction} with reasoning:\n{reasoning}"
+            f"Extracted final prediction for URL {question.page_url}: {prediction}"
         )
         return ReasonedPrediction(
-            prediction_value=prediction, reasoning=reasoning
+            prediction_value=prediction, reasoning=research
         )
 
     async def _run_forecast_on_numeric(
         self, question: NumericQuestion, research: str
     ) -> ReasonedPrediction[NumericDistribution]:
-        upper_bound_message, lower_bound_message = (
-            self._create_upper_and_lower_bound_messages(question)
-        )
-        prompt = clean_indents(
-            f"""
-            You are a professional forecaster interviewing for a job.
-
-            Your interview question is:
-            {question.question_text}
-
-            Background:
-            {question.background_info}
-
-            {question.resolution_criteria}
-
-            {question.fine_print}
-
-            Units for answer: {question.unit_of_measure if question.unit_of_measure else "Not stated (please infer this)"}
-
-            Your research assistant says:
-            {research}
-
-            Today is {datetime.now().strftime("%Y-%m-%d")}.
-
-            {lower_bound_message}
-            {upper_bound_message}
-
-            Formatting Instructions:
-            - Please notice the units requested (e.g. whether you represent a number as 1,000,000 or 1 million).
-            - Never use scientific notation.
-            - Always start with a smaller number (more negative if negative) and then increase from there
-
-            Before answering you write:
-            (a) The time left until the outcome to the question is known.
-            (b) The outcome if nothing changed.
-            (c) The outcome if the current trend continued.
-            (d) The expectations of experts and markets.
-            (e) A brief description of an unexpected scenario that results in a low outcome.
-            (f) A brief description of an unexpected scenario that results in a high outcome.
-
-            You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
-
-            The last thing you write is your final answer as:
-            "
-            Percentile 10: XX
-            Percentile 20: XX
-            Percentile 40: XX
-            Percentile 60: XX
-            Percentile 80: XX
-            Percentile 90: XX
-            "
-            """
-        )
-        reasoning = await self.get_llm("default", "llm").invoke(prompt)
+        # WHY: And again for numeric. The 'research' string from the critique loop
+        # is passed directly to the extractor.
         prediction: NumericDistribution = (
             PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
-                reasoning, question
+                research, question
             )
         )
         logger.info(
-            f"Forecasted URL {question.page_url} as {prediction.declared_percentiles} with reasoning:\n{reasoning}"
+            f"Extracted final prediction for URL {question.page_url}: {prediction.declared_percentiles}"
         )
         return ReasonedPrediction(
-            prediction_value=prediction, reasoning=reasoning
+            prediction_value=prediction, reasoning=research
         )
 
     def _create_upper_and_lower_bound_messages(
@@ -343,6 +244,21 @@ class SelfCritiqueForecaster(ForecastBot):
             )
         return upper_bound_message, lower_bound_message
 
+    @classmethod
+    def _llm_config_defaults(cls) -> dict[str, str | GeneralLlm]:
+        """
+        Returns a dictionary of default llms for the bot.
+        """
+        # WHY: We are extending the base class's defaults with our new,
+        # purpose-specific LLMs. This follows the library's design pattern
+        # and silences the warnings at startup.
+        defaults = super()._llm_config_defaults()
+        defaults.update({
+            "initial_pred_llm": defaults["default"],
+            "critique_llm": defaults["default"],
+            "refined_pred_llm": defaults["default"],
+        })
+        return defaults
 
 if __name__ == "__main__":
     logging.basicConfig(
