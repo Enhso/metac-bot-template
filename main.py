@@ -61,11 +61,36 @@ class SelfCritiqueForecaster(ForecastBot):
     _max_concurrent_questions = 1  # Set this to whatever works for your search-provider/ai-model rate limits
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
-    async def generate_initial_prediction(self):
+    async def _generate_initial_prediction(
+        self, question: MetaculusQuestion, initial_research: str
+    ) -> str:
+        """
+        Generates an initial prediction based on the broad, initial research.
+        """
+        # WHY: This prompt is designed to get a quick, baseline forecast.
+        # It's a simplified version of the original prompts, asking for a rationale
+        # and a clearly formatted prediction to kickstart the critique process.
         prompt = clean_indents(
             f"""
+            Question: {question.question_text}
+            Background: {question.background_info}
+            Resolution Criteria: {question.resolution_criteria}
+
+            Available Research:
+            {initial_research}
+
+            Based *only* on the information above, provide a brief, initial forecast.
+            State your reasoning and conclude with your prediction in the format required by the question type (e.g., "Probability: ZZ%", a list of option probabilities, or a percentile distribution).
             """
         )
+
+        # WHY: We use the 'initial_pred_llm' here, which can be a faster, cheaper model
+        # since this is just a first draft that we expect to improve upon.
+        initial_prediction_text = await self.get_llm("initial_pred_llm", "llm").invoke(
+            prompt
+        )
+        logger.info(f"Generated initial prediction for URL {question.page_url}")
+        return initial_prediction_text
 
     async def _generate_adversarial_critique(self):
         prompt = clean_indents(
@@ -86,21 +111,51 @@ class SelfCritiqueForecaster(ForecastBot):
         )
 
     async def run_research(self, question: MetaculusQuestion) -> str:
+        """
+        Orchestrates the entire "self-critique" forecasting process.
+        """
+        # WHY: We use the concurrency limiter here to manage costs and avoid rate limit errors,
+        # as this entire block constitutes one "unit of work" for a single question.
         async with self._concurrency_limiter:
-            research = ""
+            # STEP 1: Initial, broad research.
+            initial_research = ""
             if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
-                research = await AskNewsSearcher().get_formatted_news_async(
+                initial_research = await AskNewsSearcher().get_formatted_news_async(
                     question.question_text
                 )
             else:
                 logger.warning(
-                    f"No research provider found when processing question URL {question.page_url}. Will pass back empty string."
+                    f"No research provider found. Proceeding without initial research for URL {question.page_url}."
                 )
-                research = ""
+
+            # STEP 2: Generate Initial Prediction
+            initial_prediction_text = await self._generate_initial_prediction(question, initial_research)
+
+            # # STEP 3: Generate Adversarial Critique
+            # critique_text = await self._generate_adversarial_critique(question, initial_prediction_text)
+
+            # # STEP 4: Perform Targeted Search
+            # targeted_research = await self._perform_targeted_search(critique_text)
+
+            # # STEP 5: Generate Refined Prediction
+            # refined_prediction_text = await self._generate_refined_prediction(
+            #     question, initial_research, initial_prediction_text, critique_text, targeted_research
+            # )
+
+            # WHY: We combine all the steps into a single, comprehensive report.
+            # This report becomes the `research` input for the next stage and is
+            # ultimately saved in the `explanation` field of the ForecastReport,
+            # providing full transparency of the bot's reasoning process.
+            full_report = f"""
+# ============== FORECASTING PROCESS REPORT ==============
+## 1. Initial Research
+{initial_research}
+# ================= END OF REPORT =================
+"""
             logger.info(
-                f"Found Research for URL {question.page_url}:\n{research}"
+                f"Completed self-critique process for URL {question.page_url}"
             )
-            return research
+            return full_report
 
     async def _run_forecast_on_binary(
         self, question: BinaryQuestion, research: str
@@ -343,7 +398,7 @@ if __name__ == "__main__":
                 max_tokens=2048,
             ),
             "critique_llm": GeneralLlm(
-                model="metaculus/openai/gpt-4.1",
+                model="metaculdefaultus/openai/gpt-4.1",
                 temperature=0.3,
                 timeout=40,
                 allowed_tries=2,
