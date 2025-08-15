@@ -429,7 +429,7 @@ if __name__ == "__main__":
                 max_tokens=2048,
             ),
             "refined_pred_llm": GeneralLlm(
-                model="metaculus/anthropic/claude-3-7-sonnet-latest",
+                model="metaculus/anthropic/claude-3-7-sonnet-20250219",
                 temperature=0.3,
                 timeout=80,
                 allowed_tries=2,
