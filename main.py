@@ -254,8 +254,6 @@ class SelfCritiqueForecaster(ForecastBot):
                 f"Completed self-critique process for URL {question.page_url}"
             )
 
-            await asyncio.sleep(1)
-
             return full_report
 
     async def _run_forecast_on_binary(
@@ -393,7 +391,7 @@ if __name__ == "__main__":
             ),
             "refined_pred_llm": GeneralLlm(
                 model="metaculus/anthropic/claude-3-7-sonnet-latest",
-                temperature=0.3,
+                temperature=1.0,
                 timeout=80,
                 allowed_tries=2,
                 max_tokens=6144,
