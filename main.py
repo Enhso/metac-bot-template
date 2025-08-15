@@ -2,9 +2,10 @@ import argparse
 import asyncio
 import logging
 import os
+import httpx
+
 from datetime import datetime
 from typing import Literal
-
 from forecasting_tools import (
     AskNewsSearcher,
     BinaryQuestion,
@@ -20,7 +21,6 @@ from forecasting_tools import (
     ReasonedPrediction,
     clean_indents,
 )
-
 from asknews_sdk import AsyncAskNewsSDK
 
 logger = logging.getLogger(__name__)
@@ -92,23 +92,134 @@ class SelfCritiqueForecaster(ForecastBot):
         logger.info(f"Generated initial prediction for URL {question.page_url}")
         return initial_prediction_text
 
-    async def _generate_adversarial_critique(self):
+    async def _generate_adversarial_critique(
+        self, question: MetaculusQuestion, initial_prediction_text: str
+    ) -> str:
+        """
+        Challenges the initial prediction to find weaknesses.
+        """
+        # WHY: This prompt uses a "red team" or "devil's advocate" persona. This is critical
+        # for identifying biases (like confirmation bias) and uncovering hidden assumptions
+        # in the initial forecast. It explicitly asks for actionable questions.
         prompt = clean_indents(
             f"""
+            You are a skeptical analyst assigned to critique a colleague's forecast.
+            Your goal is to find flaws and weaknesses. Do not be agreeable.
+
+            The original question is: {question.question_text}
+
+            Here is your colleague's initial forecast and rationale:
+            ---
+            {initial_prediction_text}
+            ---
+
+            Critique this forecast. Point out potential biases, flawed logic, and key unstated assumptions.
+            Most importantly, conclude with a list of 2-3 specific, researchable questions that, if answered, would most significantly challenge or confirm this initial forecast.
             """
         )
 
-    async def _perform_targeted_search(self):
+        # WHY: The 'critique_llm' can be a model optimized for critical reasoning.
+        # Its job is not to be creative but to be analytical and find faults.
+        critique_text = await self.get_llm("critique_llm", "llm").invoke(prompt)
+        logger.info(f"Generated critique for URL {question.page_url}")
+        return critique_text
+
+    async def _perform_targeted_search(self, critique_text: str) -> str:
+        """
+        Performs a targeted search based on the questions raised in the critique.
+        """
+        # WHY: This is a simple but powerful step. We use an LLM to extract ONLY the
+        # questions from the critique, ensuring our subsequent search is highly focused
+        # and not diluted by the rest of the critique text.
+        extraction_prompt = clean_indents(
+            f"""
+            Extract the specific, researchable questions from the following text.
+            List only the questions, each on a new line. If there are no questions, return an empty string.
+
+            Text:
+            ---
+            {critique_text}
+            ---
+            """
+        )
+        # We can use a fast model for this simple extraction task.
+        questions_text = await self.get_llm("summarizer", "llm").invoke(extraction_prompt)
+
+        if not questions_text.strip():
+            logger.warning("No new research questions were generated from the critique.")
+            return "No targeted search was performed as no new questions were identified."
+
+        # WHY: We now use the extracted questions as direct queries for our news searcher.
+        # This directly links the identified weakness to a data-gathering step,
+        # forming the core of the refinement loop.
+        logger.info(f"Performing targeted search with queries: {questions_text.splitlines()}")
+        # We assume AskNewsSearcher can take the raw text block of questions.
+        targeted_research = await AskNewsSearcher().get_formatted_news_async(
+            questions_text
+        )
+        return targeted_research
+
+    async def _generate_refined_prediction(
+        self,
+        question: MetaculusQuestion,
+        initial_research: str,
+        initial_prediction_text: str,
+        critique_text: str,
+        targeted_research: str,
+    ) -> str:
+        """
+        Synthesizes all information into a final, refined prediction.
+        """
+        # WHY: This is the most important prompt. It synthesizes all previous steps.
+        # By providing the full context (initial thought, critique, new data), we enable
+        # the LLM to produce a more robust and well-reasoned final forecast.
+        # It explicitly asks the model to address the critique.
         prompt = clean_indents(
             f"""
+            You are a senior forecaster responsible for producing a final, high-quality prediction.
+            You have been provided with a full dossier on the question.
+
+            ## Original Question
+            {question.question_text}
+            Background: {question.background_info}
+            Resolution Criteria: {question.resolution_criteria}
+            Units for answer: {question.unit_of_measure if question.unit_of_measure else "Not stated"}
+            Today is {datetime.now().strftime("%Y-%m-%d")}.
+
+            ## Dossier
+
+            ### 1. Initial Broad Research
+            {initial_research}
+
+            ### 2. Initial Prediction and Rationale
+            {initial_prediction_text}
+
+            ### 3. Adversarial Critique of Initial Prediction
+            {critique_text}
+
+            ### 4. New, Targeted Research Based on Critique
+            {targeted_research}
+
+            ## Your Task
+            Your task is to synthesize all of the above information into a single, final forecast.
+            1.  Start by explicitly stating how the critique and targeted research have changed your initial view.
+            2.  Provide a comprehensive final rationale for your prediction.
+            3.  Conclude with your final prediction, ensuring it is in the precise format required for parsing. For example:
+                - For a binary question: "Probability: ZZ%"
+                - For a multiple choice question, list each option with its probability: "Option_A: P_A%\\nOption_B: P_B%..."
+                - For a numeric question, provide the requested percentiles: "Percentile 10: XX\\nPercentile 20: XX..."
             """
         )
 
-    async def _generate_refined_prediction(self):
-        prompt = clean_indents(
-            f"""
-            """
+        # WHY: We use our most powerful and context-aware LLM here ('refined_pred_llm').
+        # This is where we want to spend our token budget, as it's the step that
+        # produces the final, user-facing output.
+        refined_prediction_text = await self.get_llm("refined_pred_llm", "llm").invoke(
+            prompt
         )
+        logger.info(f"Generated refined prediction for URL {question.page_url}")
+        return refined_prediction_text
+
 
     async def run_research(self, question: MetaculusQuestion) -> str:
         """
@@ -117,8 +228,7 @@ class SelfCritiqueForecaster(ForecastBot):
         # WHY: We use the concurrency limiter here to manage costs and avoid rate limit errors,
         # as this entire block constitutes one "unit of work" for a single question.
         async with self._concurrency_limiter:
-            # === STEP 1: Initial, broad research. ===
-            logger.info(f"Starting self-critique process for: {question.page_url}")
+            # STEP 1: Initial, broad research.
             initial_research = ""
             if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
                 initial_research = await AskNewsSearcher().get_formatted_news_async(
@@ -126,45 +236,43 @@ class SelfCritiqueForecaster(ForecastBot):
                 )
             else:
                 logger.warning(
-                    f"No research provider found. Proceeding without initial research."
+                    f"No research provider found. Proceeding without initial research for URL {question.page_url}."
                 )
 
-            # WHY: This is a simple but effective way to handle rate limiting.
-            # We pause for a second after a burst of API calls to avoid being blocked.
-            await asyncio.sleep(1)
-
-            # === STEP 2: Generate Initial Prediction ===
+            # STEP 2: Generate Initial Prediction
             initial_prediction_text = await self._generate_initial_prediction(question, initial_research)
 
-            # === STEP 3: Generate Adversarial Critique ===
+            # STEP 3: Generate Adversarial Critique
             critique_text = await self._generate_adversarial_critique(question, initial_prediction_text)
-            logger.info("Critique generated. Now performing targeted search.")
 
-            # === STEP 4: Perform Targeted Search ===
+            # WHY: We add a short delay here to avoid hitting the AskNews API rate limit.
+            # This politely spaces out our initial research calls from our targeted research calls.
+            await asyncio.sleep(1) # Add this line
+
+            # STEP 4: Perform Targeted Search
             targeted_research = await self._perform_targeted_search(critique_text)
 
-            # WHY: Pause again after our second set of API calls.
-            await asyncio.sleep(1)
-
-            # === STEP 5: Generate Refined Prediction ===
+            # STEP 5: Generate Refined Prediction
             refined_prediction_text = await self._generate_refined_prediction(
                 question, initial_research, initial_prediction_text, critique_text, targeted_research
             )
 
             # WHY: We combine all the steps into a single, comprehensive report.
-            # This provides full transparency of the bot's reasoning process.
+            # This report becomes the `research` input for the next stage and is
+            # ultimately saved in the `explanation` field of the ForecastReport,
+            # providing full transparency of the bot's reasoning process.
             full_report = f"""
 # ============== FORECASTING PROCESS REPORT ==============
-## 1. Initial Broad Research
+## 1. Initial Research
 {initial_research}
 
-## 2. Initial Prediction & Rationale
+## 2. Initial Prediction
 {initial_prediction_text}
 
 ## 3. Adversarial Critique
 {critique_text}
 
-## 4. Targeted Research Based on Critique
+## 4. Targeted Research
 {targeted_research}
 
 ## 5. Final Refined Prediction & Rationale
@@ -314,7 +422,7 @@ if __name__ == "__main__":
                 max_tokens=2048,
             ),
             "critique_llm": GeneralLlm(
-                model="metaculdefaultus/openai/gpt-4.1",
+                model="metaculus/openai/gpt-4.1",
                 temperature=0.3,
                 timeout=40,
                 allowed_tries=2,
