@@ -67,9 +67,6 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         Generates an initial prediction based on the broad, initial research.
         """
-        # WHY: This prompt is designed to get a quick, baseline forecast.
-        # It's a simplified version of the original prompts, asking for a rationale
-        # and a clearly formatted prediction to kickstart the critique process.
         prompt = clean_indents(
             f"""
             Question: {question.question_text}
@@ -84,8 +81,6 @@ class SelfCritiqueForecaster(ForecastBot):
             """
         )
 
-        # WHY: We use the 'initial_pred_llm' here, which can be a faster, cheaper model
-        # since this is just a first draft that we expect to improve upon.
         initial_prediction_text = await self.get_llm("initial_pred_llm", "llm").invoke(
             prompt
         )
@@ -98,9 +93,6 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         Challenges the initial prediction to find weaknesses.
         """
-        # WHY: This prompt uses a "red team" or "devil's advocate" persona. This is critical
-        # for identifying biases (like confirmation bias) and uncovering hidden assumptions
-        # in the initial forecast. It explicitly asks for actionable questions.
         prompt = clean_indents(
             f"""
             You are a skeptical analyst assigned to critique a colleague's forecast.
@@ -118,8 +110,6 @@ class SelfCritiqueForecaster(ForecastBot):
             """
         )
 
-        # WHY: The 'critique_llm' can be a model optimized for critical reasoning.
-        # Its job is not to be creative but to be analytical and find faults.
         critique_text = await self.get_llm("critique_llm", "llm").invoke(prompt)
         logger.info(f"Generated critique for URL {question.page_url}")
         return critique_text
@@ -128,9 +118,6 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         Performs a targeted search based on the questions raised in the critique.
         """
-        # WHY: This is a simple but powerful step. We use an LLM to extract ONLY the
-        # questions from the critique, ensuring our subsequent search is highly focused
-        # and not diluted by the rest of the critique text.
         extraction_prompt = clean_indents(
             f"""
             Extract the specific, researchable questions from the following text.
@@ -142,22 +129,23 @@ class SelfCritiqueForecaster(ForecastBot):
             ---
             """
         )
-        # We can use a fast model for this simple extraction task.
         questions_text = await self.get_llm("summarizer", "llm").invoke(extraction_prompt)
 
         if not questions_text.strip():
             logger.warning("No new research questions were generated from the critique.")
             return "No targeted search was performed as no new questions were identified."
 
-        # WHY: We now use the extracted questions as direct queries for our news searcher.
-        # This directly links the identified weakness to a data-gathering step,
-        # forming the core of the refinement loop.
         logger.info(f"Performing targeted search with queries: {questions_text.splitlines()}")
-        # We assume AskNewsSearcher can take the raw text block of questions.
-        targeted_research = await AskNewsSearcher().get_formatted_news_async(
-            questions_text
-        )
-        return targeted_research
+
+        sdk = AsyncAskNewsSDK(
+          client_id=os.getenv("ASKNEWS_CLIENT_ID"),
+          client_secret=os.getenv("ASKNEWS_SECRET"),)
+        try:
+            results = await sdk.news.search_news(query=questions_text, n_articles=5, strategy="news knowledge")
+            print(results.as_string)
+        except Exception as e:
+            logger.error(f"Targeted search failed with an error: {e}")
+            return "An error occurred during the targeted search."
 
     async def _generate_refined_prediction(
         self,
@@ -170,10 +158,6 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         Synthesizes all information into a final, refined prediction.
         """
-        # WHY: This is the most important prompt. It synthesizes all previous steps.
-        # By providing the full context (initial thought, critique, new data), we enable
-        # the LLM to produce a more robust and well-reasoned final forecast.
-        # It explicitly asks the model to address the critique.
         prompt = clean_indents(
             f"""
             You are a senior forecaster responsible for producing a final, high-quality prediction.
@@ -211,9 +195,6 @@ class SelfCritiqueForecaster(ForecastBot):
             """
         )
 
-        # WHY: We use our most powerful and context-aware LLM here ('refined_pred_llm').
-        # This is where we want to spend our token budget, as it's the step that
-        # produces the final, user-facing output.
         refined_prediction_text = await self.get_llm("refined_pred_llm", "llm").invoke(
             prompt
         )
@@ -225,8 +206,6 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         Orchestrates the entire "self-critique" forecasting process.
         """
-        # WHY: We use the concurrency limiter here to manage costs and avoid rate limit errors,
-        # as this entire block constitutes one "unit of work" for a single question.
         async with self._concurrency_limiter:
             # STEP 1: Initial, broad research.
             initial_research = ""
@@ -245,10 +224,6 @@ class SelfCritiqueForecaster(ForecastBot):
             # STEP 3: Generate Adversarial Critique
             critique_text = await self._generate_adversarial_critique(question, initial_prediction_text)
 
-            # WHY: We add a short delay here to avoid hitting the AskNews API rate limit.
-            # This politely spaces out our initial research calls from our targeted research calls.
-            await asyncio.sleep(1) # Add this line
-
             # STEP 4: Perform Targeted Search
             targeted_research = await self._perform_targeted_search(critique_text)
 
@@ -257,10 +232,6 @@ class SelfCritiqueForecaster(ForecastBot):
                 question, initial_research, initial_prediction_text, critique_text, targeted_research
             )
 
-            # WHY: We combine all the steps into a single, comprehensive report.
-            # This report becomes the `research` input for the next stage and is
-            # ultimately saved in the `explanation` field of the ForecastReport,
-            # providing full transparency of the bot's reasoning process.
             full_report = f"""
 # ============== FORECASTING PROCESS REPORT ==============
 ## 1. Initial Research
@@ -282,15 +253,14 @@ class SelfCritiqueForecaster(ForecastBot):
             logger.info(
                 f"Completed self-critique process for URL {question.page_url}"
             )
+
+            await asyncio.sleep(1)
+
             return full_report
 
     async def _run_forecast_on_binary(
         self, question: BinaryQuestion, research: str
     ) -> ReasonedPrediction[float]:
-        # WHY: The 'research' variable now contains the entire report from our
-        # self-critique loop. The final, refined prediction and rationale are
-        # at the end of this string. The hard work of reasoning is already done.
-        # We simply extract the final answer. The full report becomes the reasoning.
         prediction: float = PredictionExtractor.extract_last_percentage_value(
             research, max_prediction=1, min_prediction=0
         )
@@ -304,8 +274,6 @@ class SelfCritiqueForecaster(ForecastBot):
     async def _run_forecast_on_multiple_choice(
         self, question: MultipleChoiceQuestion, research: str
     ) -> ReasonedPrediction[PredictedOptionList]:
-        # WHY: Same logic as the binary method. We rely on the refined prediction step
-        # to have formatted the answer correctly for the extractor to find it.
         prediction: PredictedOptionList = (
             PredictionExtractor.extract_option_list_with_percentage_afterwards(
                 research, question.options
@@ -321,8 +289,6 @@ class SelfCritiqueForecaster(ForecastBot):
     async def _run_forecast_on_numeric(
         self, question: NumericQuestion, research: str
     ) -> ReasonedPrediction[NumericDistribution]:
-        # WHY: And again for numeric. The 'research' string from the critique loop
-        # is passed directly to the extractor.
         prediction: NumericDistribution = (
             PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
                 research, question
@@ -357,9 +323,6 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         Returns a dictionary of default llms for the bot.
         """
-        # WHY: We are extending the base class's defaults with our new,
-        # purpose-specific LLMs. This follows the library's design pattern
-        # and silences the warnings at startup.
         defaults = super()._llm_config_defaults()
         defaults.update({
             "initial_pred_llm": defaults["default"],
@@ -429,7 +392,7 @@ if __name__ == "__main__":
                 max_tokens=2048,
             ),
             "refined_pred_llm": GeneralLlm(
-                model="metaculus/anthropic/claude-3-7-sonnet-20250219",
+                model="metaculus/anthropic/claude-3-7-sonnet-latest",
                 temperature=0.3,
                 timeout=80,
                 allowed_tries=2,
