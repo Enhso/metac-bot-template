@@ -142,7 +142,7 @@ class SelfCritiqueForecaster(ForecastBot):
           client_secret=os.getenv("ASKNEWS_SECRET"),)
         try:
             results = await sdk.news.search_news(query=questions_text, n_articles=5, strategy="news knowledge")
-            print(results.as_string)
+            return results.as_string
         except Exception as e:
             logger.error(f"Targeted search failed with an error: {e}")
             return "An error occurred during the targeted search."
