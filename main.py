@@ -142,7 +142,7 @@ class SelfCritiqueForecaster(ForecastBot):
           client_secret=os.getenv("ASKNEWS_SECRET"),)
         try:
             results = await sdk.news.search_news(query=questions_text, n_articles=5, strategy="news knowledge")
-            return results.as_string
+            return results.as_string if results.as_string is not None else "No results found."
         except Exception as e:
             logger.error(f"Targeted search failed with an error: {e}")
             return "An error occurred during the targeted search."
@@ -155,52 +155,61 @@ class SelfCritiqueForecaster(ForecastBot):
         critique_text: str,
         targeted_research: str,
     ) -> str:
-        """
-        Synthesizes all information into a final, refined prediction.
-        """
+        if isinstance(question, MultipleChoiceQuestion):
+            final_answer_format_instruction = f"""
+                - For the multiple choice question, list each option with its probability. You MUST use the exact option text provided.
+                  Example:
+                  "0 or 1": 10%
+                  "2 or 3": 70%
+                  "4 or more": 20%
+                  The options for this question are: {question.options}
+            """
+        elif isinstance(question, NumericQuestion):
+            final_answer_format_instruction = """
+                - For the numeric question, provide the requested percentiles. You MUST ensure the values are in strictly increasing order (10th percentile < 20th < 40th, etc.).
+                  Example:
+                  Percentile 10: 115
+                  Percentile 20: 118
+                  Percentile 40: 122
+                  Percentile 60: 126
+                  Percentile 80: 130
+                  Percentile 90: 135
+            """
+        else: # BinaryQuestion
+            final_answer_format_instruction = """
+                - For the binary question: "Probability: ZZ%"
+            """
+
         prompt = clean_indents(
             f"""
-            You are a senior forecaster responsible for producing a final, high-quality prediction.
-            You have been provided with a full dossier on the question.
-
+            You are a senior forecaster producing a final prediction. You have been provided with a full dossier on the question.
             ## Original Question
             {question.question_text}
             Background: {question.background_info}
             Resolution Criteria: {question.resolution_criteria}
-            Units for answer: {question.unit_of_measure if question.unit_of_measure else "Not stated"}
             Today is {datetime.now().strftime("%Y-%m-%d")}.
 
             ## Dossier
-
-            ### 1. Initial Broad Research
+            ### 1. Initial Research
             {initial_research}
-
-            ### 2. Initial Prediction and Rationale
+            ### 2. Initial Prediction
             {initial_prediction_text}
-
-            ### 3. Adversarial Critique of Initial Prediction
+            ### 3. Adversarial Critique
             {critique_text}
-
-            ### 4. New, Targeted Research Based on Critique
+            ### 4. New, Targeted Research
             {targeted_research}
 
             ## Your Task
-            Your task is to synthesize all of the above information into a single, final forecast.
-            1.  Start by explicitly stating how the critique and targeted research have changed your initial view.
-            2.  Provide a comprehensive final rationale for your prediction.
-            3.  Conclude with your final prediction, ensuring it is in the precise format required for parsing. For example:
-                - For a binary question: "Probability: ZZ%"
-                - For a multiple choice question, list each option with its probability: "Option_A: P_A%\\nOption_B: P_B%..."
-                - For a numeric question, provide the requested percentiles: "Percentile 10: XX\\nPercentile 20: XX..."
+            Synthesize all of the above information into a single, final forecast.
+            1. State how the critique and targeted research changed your initial view.
+            2. Provide a comprehensive final rationale.
+            3. Conclude with your final prediction, ensuring it is in the precise format required:
+            {final_answer_format_instruction}
             """
         )
-
-        refined_prediction_text = await self.get_llm("refined_pred_llm", "llm").invoke(
-            prompt
-        )
+        refined_prediction_text = await self.get_llm("refined_pred_llm", "llm").invoke(prompt)
         logger.info(f"Generated refined prediction for URL {question.page_url}")
         return refined_prediction_text
-
 
     async def run_research(self, question: MetaculusQuestion) -> str:
         """
@@ -287,17 +296,14 @@ class SelfCritiqueForecaster(ForecastBot):
     async def _run_forecast_on_numeric(
         self, question: NumericQuestion, research: str
     ) -> ReasonedPrediction[NumericDistribution]:
-        prediction: NumericDistribution = (
-            PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
-                research, question
-            )
+        dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
+            research, question
         )
-        logger.info(
-            f"Extracted final prediction for URL {question.page_url}: {prediction.declared_percentiles}"
-        )
-        return ReasonedPrediction(
-            prediction_value=prediction, reasoning=research
-        )
+
+        dist.declared_percentiles.sort(key=lambda p: p.percentile)
+
+        logger.info(f"Extracted and sorted final prediction for URL {question.page_url}: {dist.declared_percentiles}")
+        return ReasonedPrediction(prediction_value=dist, reasoning=research)
 
     def _create_upper_and_lower_bound_messages(
         self, question: NumericQuestion
