@@ -61,6 +61,27 @@ class SelfCritiqueForecaster(ForecastBot):
     _max_concurrent_questions = 1  # Set this to whatever works for your search-provider/ai-model rate limits
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
+    def _normalize_probabilities(self, predictions: PredictedOptionList) -> PredictedOptionList:
+        """
+        Clamps probabilities to the Metaculus API limits [0.001, 0.999] and re-normalizes.
+        """
+        min_prob = 0.001
+        max_prob = 0.999
+
+        # Clamp values that are too low or too high
+        for p in predictions.predicted_options:
+            if p.probability < min_prob:
+                p.probability = min_prob
+            if p.probability > max_prob:
+                p.probability = max_prob
+
+        # Re-normalize to ensure the sum is 1.0
+        total = sum(p.probability for p in predictions.predicted_options)
+        for p in predictions.predicted_options:
+            p.probability /= total
+
+        return predictions
+
     async def _generate_initial_prediction(
         self, question: MetaculusQuestion, initial_research: str
     ) -> str:
@@ -281,17 +302,12 @@ class SelfCritiqueForecaster(ForecastBot):
     async def _run_forecast_on_multiple_choice(
         self, question: MultipleChoiceQuestion, research: str
     ) -> ReasonedPrediction[PredictedOptionList]:
-        prediction: PredictedOptionList = (
-            PredictionExtractor.extract_option_list_with_percentage_afterwards(
-                research, question.options
-            )
+        prediction = PredictionExtractor.extract_option_list_with_percentage_afterwards(
+            research, question.options
         )
-        logger.info(
-            f"Extracted final prediction for URL {question.page_url}: {prediction}"
-        )
-        return ReasonedPrediction(
-            prediction_value=prediction, reasoning=research
-        )
+        normalized_prediction = self._normalize_probabilities(prediction)
+        logger.info(f"Extracted and normalized final prediction for URL {question.page_url}: {normalized_prediction}")
+        return ReasonedPrediction(prediction_value=normalized_prediction, reasoning=research)
 
     async def _run_forecast_on_numeric(
         self, question: NumericQuestion, research: str
@@ -437,7 +453,8 @@ if __name__ == "__main__":
             "https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
             "https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
             "https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
-            "https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029        ]
+  #          "https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029        ]
+        ]
         bot_one.skip_previously_forecasted_questions = False
         questions = [
             MetaculusApi.get_question_by_url(question_url)
