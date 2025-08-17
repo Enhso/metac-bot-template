@@ -2,12 +2,10 @@ import argparse
 import asyncio
 import logging
 import os
-import httpx
 
 from datetime import datetime
 from typing import Literal
 from forecasting_tools import (
-    AskNewsSearcher,
     BinaryQuestion,
     ForecastBot,
     GeneralLlm,
@@ -240,14 +238,21 @@ class SelfCritiqueForecaster(ForecastBot):
             # STEP 1: Initial, broad research.
             initial_research = ""
             if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
-                initial_research = await AskNewsSearcher().get_formatted_news_async(
-                    question.question_text
+                sdk = AsyncAskNewsSDK(
+                    client_id=os.getenv("ASKNEWS_CLIENT_ID"),
+                    client_secret=os.getenv("ASKNEWS_SECRET"),
                 )
+                try:
+                    logger.info(f"Performing comprehensive initial search for {question.page_url}")
+                    results = await sdk.news.search_news(
+                        query=question.question_text, n_articles=10, strategy="news knowledge"
+                    )
+                    initial_research = results.as_string if results.as_string is not None else "No results found."
+                except Exception as e:
+                    logger.error(f"Initial research for {question.page_url} failed: {e}", exc_info=True)
+                    initial_research = f"An error occurred during initial research: {e}"
             else:
-                logger.warning(
-                    f"No research provider found. Proceeding without initial research for URL {question.page_url}."
-                )
-
+                logger.warning(f"No research provider found for URL {question.page_url}.")
             # STEP 2: Generate Initial Prediction
             initial_prediction_text = await self._generate_initial_prediction(question, initial_research)
 
@@ -315,9 +320,7 @@ class SelfCritiqueForecaster(ForecastBot):
         dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
             research, question
         )
-
         dist.declared_percentiles.sort(key=lambda p: p.percentile)
-
         logger.info(f"Extracted and sorted final prediction for URL {question.page_url}: {dist.declared_percentiles}")
         return ReasonedPrediction(prediction_value=dist, reasoning=research)
 
