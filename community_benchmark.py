@@ -18,7 +18,7 @@ from forecasting_tools import (
     run_benchmark_streamlit_page,
 )
 
-from main import TemplateForecaster
+from main import SelfCritiqueForecaster
 
 logger = logging.getLogger(__name__)
 
@@ -57,35 +57,63 @@ async def benchmark_forecast_bot(mode: str) -> None:
         raise ValueError(f"Invalid mode: {mode}")
 
     with MonetaryCostManager() as cost_manager:
-        bots = [
-            TemplateForecaster(
-                predictions_per_research_report=5,
-                llms={
-                    "default": GeneralLlm(
-                        model="gpt-4o-mini",
-                        temperature=0.3,
-                    ),
-                },
-            ),
-            TemplateForecaster(
-                predictions_per_research_report=1,
-                llms={
-                    "default": GeneralLlm(
-                        model="gpt-4o-mini",
-                        temperature=0.3,
-                    ),
-                },
-            ),
-            # Add other ForecastBots here (or same bot with different parameters)
-        ]
-        bots = typeguard.check_type(bots, list[ForecastBot])
-        benchmarks = await Benchmarker(
+      bot_one = SelfCritiqueForecaster(
+          research_reports_per_question=1,
+          predictions_per_research_report=5,
+          use_research_summary_to_forecast=False,
+          publish_reports_to_metaculus=True,
+          folder_to_save_reports_to=None,
+          skip_previously_forecasted_questions=True,
+          llms={
+              "default": GeneralLlm(
+                  model="metaculus/openai/gpt-4.1",
+                  temperature=0.3,
+                  timeout=40,
+                  allowed_tries=2,
+                  max_tokens=1024,
+              ),
+              "initial_pred_llm": GeneralLlm(
+                  model="metaculus/openai/gpt-4.1",
+                  temperature=0.3,
+                  timeout=40,
+                  allowed_tries=2,
+                  max_tokens=2048,
+              ),
+              "critique_llm": GeneralLlm(
+                  model="metaculus/openai/gpt-4.1",
+                  temperature=0.3,
+                  timeout=40,
+                  allowed_tries=2,
+                  max_tokens=2048,
+              ),
+              "refined_pred_llm": GeneralLlm(
+                  model="metaculus/anthropic/claude-3-7-sonnet-latest",
+                  temperature=1.0,
+                  timeout=80,
+                  allowed_tries=2,
+                  max_tokens=6144,
+                  thinking={
+                      "type": "enabled",
+                      "budget_tokens": 4096,
+                  },
+              ),
+              "summarizer": GeneralLlm(
+                  model="metaculus/openai/gpt-4.1",
+                  temperature=0.3,
+                  timeout=40,
+                  allowed_tries=2,
+                  max_tokens=2048,
+              ),
+          },
+      )
+      bot_one = typeguard.check_type([bot_one], list[ForecastBot])
+      benchmarks = await Benchmarker(
             questions_to_use=questions,
-            forecast_bots=bots,
+            forecast_bots=bot_one,
             file_path_to_save_reports="benchmarks/",
             concurrent_question_batch_size=10,
         ).run_benchmark()
-        for i, benchmark in enumerate(benchmarks):
+      for i, benchmark in enumerate(benchmarks):
             logger.info(
                 f"Benchmark {i+1} of {len(benchmarks)}: {benchmark.name}"
             )
@@ -94,7 +122,7 @@ async def benchmark_forecast_bot(mode: str) -> None:
             )
             logger.info(f"- Total Cost: {benchmark.total_cost}")
             logger.info(f"- Time taken: {benchmark.time_taken_in_minutes}")
-        logger.info(f"Total Cost: {cost_manager.current_usage}")
+      logger.info(f"Total Cost: {cost_manager.current_usage}")
 
 
 if __name__ == "__main__":
@@ -128,5 +156,3 @@ if __name__ == "__main__":
         args.mode
     )
     asyncio.run(benchmark_forecast_bot(mode))
-
-
