@@ -68,21 +68,21 @@ async def benchmark_forecast_bot(mode: str) -> None:
               "default": GeneralLlm(
                   model="metaculus/openai/gpt-4.1",
                   temperature=0.3,
-                  timeout=40,
+                  timeout=80,
                   allowed_tries=2,
                   max_tokens=1024,
               ),
               "initial_pred_llm": GeneralLlm(
                   model="metaculus/openai/gpt-4.1",
                   temperature=0.3,
-                  timeout=40,
+                  timeout=80,
                   allowed_tries=2,
                   max_tokens=2048,
               ),
               "critique_llm": GeneralLlm(
                   model="metaculus/openai/gpt-4.1",
                   temperature=0.3,
-                  timeout=40,
+                  timeout=80,
                   allowed_tries=2,
                   max_tokens=2048,
               ),
@@ -100,7 +100,7 @@ async def benchmark_forecast_bot(mode: str) -> None:
               "summarizer": GeneralLlm(
                   model="metaculus/openai/gpt-4.1",
                   temperature=0.3,
-                  timeout=40,
+                  timeout=80,
                   allowed_tries=2,
                   max_tokens=2048,
               ),

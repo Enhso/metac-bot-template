@@ -173,7 +173,7 @@ class SelfCritiqueForecaster(ForecastBot):
 
         sdk = AsyncAskNewsSDK(
           client_id=os.getenv("ASKNEWS_CLIENT_ID"),
-          client_secret=os.getenv("AThroughout your analysis, explicitly note where you're relying on data versus judgment, flag insufficient information, and be vigilant about potential cognitive biases affecting your estimates.SKNEWS_SECRET"),)
+          client_secret=os.getenv("ASKNEWS_SECRET"),)
         try:
             results = await sdk.news.search_news(query=questions_text, n_articles=5, strategy="news knowledge")
             return results.as_string if results.as_string is not None else "No results found."
@@ -425,21 +425,21 @@ if __name__ == "__main__":
             "default": GeneralLlm(
                 model="metaculus/openai/gpt-4.1",
                 temperature=0.3,
-                timeout=40,
+                timeout=80,
                 allowed_tries=2,
                 max_tokens=1024,
             ),
             "initial_pred_llm": GeneralLlm(
                 model="metaculus/openai/gpt-4.1",
                 temperature=0.3,
-                timeout=40,
+                timeout=80,
                 allowed_tries=2,
                 max_tokens=2048,
             ),
             "critique_llm": GeneralLlm(
                 model="metaculus/openai/gpt-4.1",
                 temperature=0.3,
-                timeout=40,
+                timeout=80,
                 allowed_tries=2,
                 max_tokens=2048,
             ),
@@ -457,7 +457,7 @@ if __name__ == "__main__":
             "summarizer": GeneralLlm(
                 model="metaculus/openai/gpt-4.1",
                 temperature=0.3,
-                timeout=40,
+                timeout=80,
                 allowed_tries=2,
                 max_tokens=2048,
             ),
