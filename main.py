@@ -88,12 +88,27 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         prompt = clean_indents(
             f"""
-            Question: {question.question_text}
-            Background: {question.background_info}
-            Resolution Criteria: {question.resolution_criteria}
+            You are a calibrated superforecaster who prioritizes quantifiable uncertainty over false precision. Your task is to forecast the following:
 
-            Available Research:
+            ## Question:
+            {question.question_text}
+
+            ## Background:
+            {question.background_info}
+
+            ## Resolution Criteria:
+            {question.resolution_criteria}
+
+            ## Available Research:
             {initial_research}
+
+            ## Approach
+            1. Break down this prediction into component parts and relevant variables
+            2. Weigh evidence by reliability: verified data > historical comparables > expert opinions > models
+            3. Integrate both reference class forecasting (outside view) and case-specific analysis (inside view)
+            4. Quantify uncertainty at each step, distinguishing between data, assumptions, and inferences
+
+            Throughout your analysis, explicitly note where you're relying on data versus judgment, flag insufficient information, and be vigilant about potential cognitive biases affecting your estimates.
 
             Based *only* on the information above, provide a brief, initial forecast.
             State your reasoning and conclude with your prediction in the format required by the question type (e.g., "Probability: ZZ%", a list of option probabilities, or a percentile distribution).
@@ -158,7 +173,7 @@ class SelfCritiqueForecaster(ForecastBot):
 
         sdk = AsyncAskNewsSDK(
           client_id=os.getenv("ASKNEWS_CLIENT_ID"),
-          client_secret=os.getenv("ASKNEWS_SECRET"),)
+          client_secret=os.getenv("AThroughout your analysis, explicitly note where you're relying on data versus judgment, flag insufficient information, and be vigilant about potential cognitive biases affecting your estimates.SKNEWS_SECRET"),)
         try:
             results = await sdk.news.search_news(query=questions_text, n_articles=5, strategy="news knowledge")
             return results.as_string if results.as_string is not None else "No results found."
@@ -201,11 +216,17 @@ class SelfCritiqueForecaster(ForecastBot):
 
         prompt = clean_indents(
             f"""
-            You are a senior forecaster producing a final prediction. You have been provided with a full dossier on the question.
-            ## Original Question
+            You are a calibrated superforecaster who prioritizes quantifiable uncertainty over false precision producing a final prediction. You have been provided with a full dossier on the question.
+
+            ## Question
             {question.question_text}
-            Background: {question.background_info}
-            Resolution Criteria: {question.resolution_criteria}
+
+            ## Background:
+            {question.background_info}
+
+            ## Resolution Criteria:
+            {question.resolution_criteria}
+
             Today is {datetime.now().strftime("%Y-%m-%d")}.
 
             ## Dossier
@@ -217,6 +238,14 @@ class SelfCritiqueForecaster(ForecastBot):
             {critique_text}
             ### 4. New, Targeted Research
             {targeted_research}
+
+            ## Approach
+            1. Break down this prediction into component parts and relevant variables
+            2. Weigh evidence by reliability: verified data > historical comparables > expert opinions > models
+            3. Integrate both reference class forecasting (outside view) and case-specific analysis (inside view)
+            4. Quantify uncertainty at each step, distinguishing between data, assumptions, and inferences
+
+            Throughout your analysis, explicitly note where you're relying on data versus judgment, flag insufficient information, and be vigilant about potential cognitive biases affecting your estimates.
 
             ## Your Task
             Synthesize all of the above information into a single, final forecast.
