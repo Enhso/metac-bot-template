@@ -164,7 +164,7 @@ class SelfCritiqueForecaster(ForecastBot):
             ---
             """
         )
-        questions_text = await self.get_llm("summarizer", "llm").invoke(extraction_prompt)
+        questions_text = await self.get_llm("extractor", "llm").invoke(extraction_prompt)
 
         if not questions_text.strip():
             logger.warning("No new research questions were generated from the critique.")
@@ -441,7 +441,7 @@ if __name__ == "__main__":
                     "budget_tokens": 4096,
                 },
             ),
-            "summarizer": GeneralLlm(
+            "extractor": GeneralLlm(
                 model="metaculus/openai/gpt-4.1",
                 temperature=0.3,
                 timeout=80,
