@@ -88,30 +88,29 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         prompt = clean_indents(
             f"""
-            You are a calibrated superforecaster who prioritizes quantifiable uncertainty over false precision. Your task is to forecast the following:
+            You are a world-class superforecaster tasked with generating a baseline prediction. Your methodology is grounded in empirical evidence and a deep awareness of cognitive biases.
 
-            ## Question:
-            {question.question_text}
+            **Question:** {question.question_text}
+            **Background:** {question.background_info}
+            **Resolution Criteria:** {question.resolution_criteria}
+            **Date of Forecast:** {datetime.now().strftime("%Y-%m-%d")}
 
-            ## Background:
-            {question.background_info}
-
-            ## Resolution Criteria:
-            {question.resolution_criteria}
-
-            ## Available Research:
+            **Initial Research Dossier:**
             {initial_research}
 
-            ## Approach
-            1. Break down this prediction into component parts and relevant variables
-            2. Weigh evidence by reliability: verified data > historical comparables > expert opinions > models
-            3. Integrate both reference class forecasting (outside view) and case-specific analysis (inside view)
-            4. Quantify uncertainty at each step, distinguishing between data, assumptions, and inferences
+            **Your Task:**
+            Based *only* on the information provided above, produce an initial forecast.
 
-            Throughout your analysis, explicitly note where you're relying on data versus judgment, flag insufficient information, and be vigilant about potential cognitive biases affecting your estimates.
+            1.  **Triage & Deconstruct:** Is this question knowable? Break it down into its core, tractable components (a "Fermi-ization"). Distinguish between what is known, what is unknown, and your key assumptions.
+            2.  **Establish the Outside View:** What is the base rate for events like this? Identify a relevant reference class and state the historical probability. This will be the initial anchor for your forecast.
+            3.  **Incorporate the Inside View:** How do the specific details of this case alter the base rate? Analyze the provided research, weighing the evidence.
+            4.  **Initial Synthesis & Forecast:** Integrate the outside and inside views to produce a precise, probabilistic forecast. Clearly state your reasoning, referencing specific points from the research.
 
-            Based *only* on the information above, provide a brief, initial forecast.
-            State your reasoning and conclude with your prediction in the format required by the question type (e.g., "Probability: ZZ%", a list of option probabilities, or a percentile distribution).
+            Conclude with your prediction in the required format.
+
+            *   **For Binary Questions:** "Initial Probability: XX%"
+            *   **For Numeric Questions:** Provide a five-point percentile distribution (10th, 25th, 50th, 75th, 90th).
+            *   **For Multiple Choice Questions:** List each option with its assigned probability, ensuring they sum to 100%.
             """
         )
 
@@ -129,18 +128,20 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         prompt = clean_indents(
             f"""
-            You are a skeptical analyst assigned to critique a colleague's forecast.
-            Your goal is to find flaws and weaknesses. Do not be agreeable.
+            You are a skeptical "red team" analyst. Your sole purpose is to identify the flaws in a colleague's forecast to prevent catastrophic errors. Do not be agreeable. Your critique must be constructive and lead to actionable lines of inquiry.
 
-            The original question is: {question.question_text}
+            **Question:** {question.question_text}
 
-            Here is your colleague's initial forecast and rationale:
-            ---
+            **Colleague's Initial Forecast & Rationale:**
             {initial_prediction_text}
-            ---
 
-            Critique this forecast. Point out potential biases, flawed logic, and key unstated assumptions.
-            Most importantly, conclude with a list of 2-3 specific, researchable questions that, if answered, would most significantly challenge or confirm this initial forecast.
+            **Your Task:**
+            Critique the forecast with extreme skepticism.
+
+            1.  **Challenge the Premise:** What if the core assumption is wrong? Actively search for alternative interpretations of the evidence.
+            2.  **Identify Biases:** Did the forecaster fall prey to confirmation bias, anchoring, or wishful thinking? Is the "inside view" overwhelming a more reliable "outside view"?
+            3.  **Expose Knowledge Gaps:** What crucial information is missing? What remains uncertain?
+            4.  **Generate Research Questions:** Conclude with a list of 2-4 specific, high-impact, and researchable questions. These questions should be designed to directly probe the weakest points of the initial forecast. They will form the basis for the next stage of intelligence gathering.
             """
         )
 
@@ -216,43 +217,25 @@ class SelfCritiqueForecaster(ForecastBot):
 
         prompt = clean_indents(
             f"""
-            You are a calibrated superforecaster who prioritizes quantifiable uncertainty over false precision producing a final prediction. You have been provided with a full dossier on the question.
+            You are a lead superforecaster producing the final, definitive forecast for your team. You must weigh all perspectives and evidence to arrive at the most accurate and well-calibrated prediction possible.
 
-            ## Question
-            {question.question_text}
+            **Question:** {question.question_text}
+            **Background:** {question.background_info}
+            **Resolution Criteria:** {question.resolution_criteria}
+            **Date of Forecast:** {datetime.now().strftime("%Y-%m-%d")}
 
-            ## Background:
-            {question.background_info}
+            **Complete Dossier:**
+            1.  **Initial Research:** {initial_research}
+            2.  **Initial Forecast:** {initial_prediction_text}
+            3.  **Adversarial Critique:** {critique_text}
+            4.  **Targeted Research Report:** {targeted_research}
 
-            ## Resolution Criteria:
-            {question.resolution_criteria}
+            **Your Task:**
+            Produce a final, comprehensive forecast by synthesizing the entire dossier.
 
-            Today is {datetime.now().strftime("%Y-%m-%d")}.
-
-            ## Dossier
-            ### 1. Initial Research
-            {initial_research}
-            ### 2. Initial Prediction
-            {initial_prediction_text}
-            ### 3. Adversarial Critique
-            {critique_text}
-            ### 4. New, Targeted Research
-            {targeted_research}
-
-            ## Approach
-            1. Break down this prediction into component parts and relevant variables
-            2. Weigh evidence by reliability: verified data > historical comparables > expert opinions > models
-            3. Integrate both reference class forecasting (outside view) and case-specific analysis (inside view)
-            4. Quantify uncertainty at each step, distinguishing between data, assumptions, and inferences
-
-            Throughout your analysis, explicitly note where you're relying on data versus judgment, flag insufficient information, and be vigilant about potential cognitive biases affecting your estimates.
-
-            ## Your Task
-            Synthesize all of the above information into a single, final forecast.
-            1. State how the critique and targeted research changed your initial view.
-            2. Provide a comprehensive final rationale.
-            3. Conclude with your final prediction, ensuring it is in the precise format required:
-            {final_answer_format_instruction}
+            1.  **Update Your Beliefs:** Explicitly state how the critique and the targeted research have shifted your perspective from the initial forecast. Did the new information confirm, challenge, or refine your original view? By how much did you update your probabilities, and why? This demonstrates "perpetual beta."
+            2.  **Final Rationale:** Provide a complete, final analysis that integrates the outside view, the inside view, and all new evidence. Acknowledge any remaining uncertainties and justify the level of confidence in your final prediction.
+            3.  **Final Forecast:** Conclude with your final prediction in the precise format required: {final_answer_format_instruction}
             """
         )
         refined_prediction_text = await self.get_llm("refined_pred_llm", "llm").invoke(prompt)
@@ -437,11 +420,15 @@ if __name__ == "__main__":
                 max_tokens=2048,
             ),
             "critique_llm": GeneralLlm(
-                model="metaculus/openai/gpt-4.1",
-                temperature=0.3,
+                model="metaculus/anthropic/claude-3-7-sonnet-latest",
+                temperature=1.0,
                 timeout=80,
                 allowed_tries=2,
-                max_tokens=2048,
+                max_tokens=6144,
+                thinking={
+                    "type": "enabled",
+                    "budget_tokens": 4096,
+                },
             ),
             "refined_pred_llm": GeneralLlm(
                 model="metaculus/anthropic/claude-3-7-sonnet-latest",
