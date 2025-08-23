@@ -40,7 +40,7 @@ async def benchmark_forecast_bot(mode: str) -> None:
         one_year_from_now = datetime.now() + timedelta(days=365)
         api_filter = ApiFilter(
             allowed_statuses=["open"],
-            allowed_types=["binary"],
+            allowed_types=["binary", "numeric", "multiple_choice"],
             num_forecasters_gte=40,
             scheduled_resolve_time_lt=one_year_from_now,
             includes_bots_in_aggregates=False,
@@ -63,7 +63,7 @@ async def benchmark_forecast_bot(mode: str) -> None:
           use_research_summary_to_forecast=False,
           publish_reports_to_metaculus=True,
           folder_to_save_reports_to=None,
-          skip_previously_forecasted_questions=True,
+          skip_previously_forecasted_questions=False,
           llms={
               "default": GeneralLlm(
                   model="metaculus/openai/gpt-4.1",
@@ -77,24 +77,28 @@ async def benchmark_forecast_bot(mode: str) -> None:
                   temperature=0.3,
                   timeout=80,
                   allowed_tries=2,
-                  max_tokens=2048,
+                  max_tokens=4096,
               ),
               "critique_llm": GeneralLlm(
-                  model="metaculus/openai/gpt-4.1",
-                  temperature=0.3,
+                  model="metaculus/anthropic/claude-3-7-sonnet-latest",
+                  temperature=1.0,
                   timeout=80,
                   allowed_tries=2,
-                  max_tokens=2048,
+                  max_tokens=8192,
+                  thinking={
+                      "type": "enabled",
+                      "budget_tokens": 5120,
+                  },
               ),
               "refined_pred_llm": GeneralLlm(
                   model="metaculus/anthropic/claude-3-7-sonnet-latest",
                   temperature=1.0,
                   timeout=80,
                   allowed_tries=2,
-                  max_tokens=6144,
+                  max_tokens=8192,
                   thinking={
                       "type": "enabled",
-                      "budget_tokens": 4096,
+                      "budget_tokens": 5120,
                   },
               ),
               "summarizer": GeneralLlm(
@@ -102,7 +106,7 @@ async def benchmark_forecast_bot(mode: str) -> None:
                   temperature=0.3,
                   timeout=80,
                   allowed_tries=2,
-                  max_tokens=2048,
+                  max_tokens=4096,
               ),
           },
       )

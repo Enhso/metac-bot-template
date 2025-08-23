@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 
 from datetime import datetime
 from typing import Literal
@@ -54,10 +55,38 @@ class SelfCritiqueForecaster(ForecastBot):
     await self.rate_limiter.wait_till_able_to_acquire_resources(1) # 1 because it's consuming 1 request (use more if you are adding a token limit)
     ```
     Additionally OpenRouter has large rate limits immediately on account creation
-    """
+      """
 
     _max_concurrent_questions = 1  # Set this to whatever works for your search-provider/ai-model rate limits
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
+
+# In main.py, add this new method inside the SelfCritiqueForecaster class
+
+    def _save_report_to_file(self, question: MetaculusQuestion, report_content: str):
+        """
+        Saves the provided report content to a uniquely named text file.
+        """
+        output_dir = "forecast_reports"
+        os.makedirs(output_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+        sanitized_question = re.sub(r'[\\/*?:"<>|]', "", question.question_text)
+        sanitized_question = sanitized_question[:100].strip()
+
+        base_filename = f"{timestamp}_{sanitized_question}"
+        file_path = os.path.join(output_dir, f"{base_filename}.txt")
+        counter = 1
+        while os.path.exists(file_path):
+            file_path = os.path.join(output_dir, f"{base_filename}_{counter}.txt")
+            counter += 1
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(report_content)
+            logger.info(f"Successfully saved forecast report to: {file_path}")
+        except IOError as e:
+            logger.error(f"Failed to save report to file '{file_path}': {e}")
 
     def _normalize_probabilities(self, predictions: PredictedOptionList) -> PredictedOptionList:
         """
@@ -88,7 +117,7 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         prompt = clean_indents(
             f"""
-            You are a calibrated superforecaster who prioritizes quantifiable uncertainty over false precision. Your task is to forecast the following:
+            You are a superforecaster following the principles of Philip Tetlock. Your reasoning must be transparent, self-critical, and grounded in evidence. Your goal is to produce an initial, rigorously derived forecast.
 
             ## Question:
             {question.question_text}
@@ -102,16 +131,33 @@ class SelfCritiqueForecaster(ForecastBot):
             ## Available Research:
             {initial_research}
 
-            ## Approach
-            1. Break down this prediction into component parts and relevant variables
-            2. Weigh evidence by reliability: verified data > historical comparables > expert opinions > models
-            3. Integrate both reference class forecasting (outside view) and case-specific analysis (inside view)
-            4. Quantify uncertainty at each step, distinguishing between data, assumptions, and inferences
+            ## Your Task:
+            Generate an initial forecast by following these four steps precisely.
 
-            Throughout your analysis, explicitly note where you're relying on data versus judgment, flag insufficient information, and be vigilant about potential cognitive biases affecting your estimates.
+            ### Step 1: Triage and Deconstruction (Fermi-ize)
+            First, assess the question's tractability. Is it a "clock-like" or "cloud-like" problem? Then, break the core question down into smaller, more manageable, and quantifiable components. List these sub-questions.
 
-            Based *only* on the information above, provide a brief, initial forecast.
-            State your reasoning and conclude with your prediction in the format required by the question type (e.g., "Probability: ZZ%", a list of option probabilities, or a percentile distribution).            """
+            ### Step 2: Establish the Outside View
+            Identify a suitable reference class for this event. What is the base rate of outcomes for similar situations? State the reference class and the resulting base rate probability. This will be your initial anchor.
+
+            ### Step 3: Integrate the Inside View
+            Now, analyze the unique, case-specific evidence from the provided research. How does this new information adjust your initial anchor from the outside view? Systematically discuss the evidence for and against, adjusting your probability estimate up or down. Mention any potential biases (e.g., availability bias, confirmation bias) that might be influencing your interpretation of the inside view.
+
+            ### Step 4: Initial Forecast and Rationale Synthesis
+            Synthesize your findings from the steps above into a coherent rationale. Clearly state your key assumptions and where your uncertainty lies. Conclude with your initial prediction in the precise format required.
+
+            **Required Output Format:**
+            **Step 1: Triage and Deconstruction**
+            - [Your analysis of the question's tractability and your list of sub-questions]
+            **Step 2: Outside View**
+            - Reference Class: [Your identified reference class]
+            - Base Rate/Anchor: [Your calculated base rate]
+            **Step 3: Inside View**
+            - [Your analysis adjusting the anchor based on case-specific evidence]
+            **Step 4: Initial Forecast and Rationale Synthesis**
+            - [Your synthesized rationale]
+            - [Your final prediction in the required format]
+            """
         )
 
         initial_prediction_text = await self.get_llm("initial_pred_llm", "llm").invoke(
@@ -128,18 +174,24 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         prompt = clean_indents(
             f"""
-            You are a skeptical analyst assigned to critique a colleague's forecast.
-            Your goal is to find flaws and weaknesses. Do not be agreeable.
+            You are an intelligence analyst assigned to conduct a "red team" exercise. Your sole purpose is to challenge a colleague's forecast with constructive, aggressive skepticism. Do not be agreeable. Your goal is to expose every potential weakness.
 
-            The original question is: {question.question_text}
+            ## The Original Question:
+            {question.question_text}
 
-            Here is your colleague's initial forecast and rationale:
+            ## Colleague's Initial Forecast and Rationale:
             ---
             {initial_prediction_text}
             ---
 
-            Critique this forecast. Point out potential biases, flawed logic, and key unstated assumptions.
-            Most importantly, conclude with a list of 2-3 specific, researchable questions that, if answered, would most significantly challenge or confirm this initial forecast.            """
+            ## Your Task:
+            Critique this forecast by addressing the following points:
+
+            1.  **Challenge Core Assumptions:** Identify the 2-3 most critical stated or unstated assumptions in the initial forecast. Why might they be wrong?
+            2.  **Propose an Alternative Perspective:** Actively consider the opposite conclusion. What key evidence or alternative interpretation was downplayed or missed entirely?
+            3.  **Stress-Test the Outside View:** Was the chosen reference class appropriate? Propose at least one alternative reference class and explain how it might change the forecast.
+            4.  **Generate High-Value Questions:** Conclude with a list of 2-3 specific, researchable questions. These questions should be designed to resolve the greatest points of uncertainty you've identified and have the highest potential to falsify the initial forecast.
+            """
         )
 
         critique_text = await self.get_llm("critique_llm", "llm").invoke(prompt)
@@ -214,44 +266,49 @@ class SelfCritiqueForecaster(ForecastBot):
 
         prompt = clean_indents(
             f"""
-            You are a calibrated superforecaster who prioritizes quantifiable uncertainty over false precision producing a final prediction. You have been provided with a full dossier on the question.
+            You are a superforecaster producing a final, synthesized prediction. You have reviewed an initial analysis, a skeptical critique, and new targeted research. Your task is to integrate all evidence into a refined forecast, demonstrating intellectual humility and a commitment to "perpetual beta" (continuous improvement).
 
             ## Question
             {question.question_text}
 
-            ## Background:
+            ## Background & Resolution Criteria:
             {question.background_info}
-
-            ## Resolution Criteria:
             {question.resolution_criteria}
-
             Today is {datetime.now().strftime("%Y-%m-%d")}.
 
             ## Dossier
             ### 1. Initial Research
             {initial_research}
-            ### 2. Initial Prediction
+            ### 2. Initial Prediction (Thesis)
             {initial_prediction_text}
-            ### 3. Adversarial Critique
+            ### 3. Adversarial Critique (Antithesis)
             {critique_text}
             ### 4. New, Targeted Research
             {targeted_research}
 
-            ## Approach
-            1. Break down this prediction into component parts and relevant variables
-            2. Weigh evidence by reliability: verified data > historical comparables > expert opinions > models
-            3. Integrate both reference class forecasting (outside view) and case-specific analysis (inside view)
-            4. Quantify uncertainty at each step, distinguishing between data, assumptions, and inferences
+            ## Your Task:
+            Follow this three-step process to generate your final analysis.
 
-            Throughout your analysis, explicitly note where you're relying on data versus judgment, flag insufficient information, and be vigilant about potential cognitive biases affecting your estimates.
+            ### Step 1: Synthesize Thesis, Antithesis, and New Evidence
+            Adopt a "dragonfly eye" perspective. Explicitly discuss how the critique and the targeted research have altered your initial view. Which arguments from the initial forecast still hold, and which have been weakened or overturned? Weigh the conflicting points and synthesize them. Don't just discard one view for another; integrate them.
 
-            ## Your Task
-            Synthesize all of the above information into a single, final forecast.
-            1. State how the critique and targeted research changed your initial view.
-            2. Provide a comprehensive final rationale.
-            3. Conclude with your final prediction, ensuring it is in the precise format required:
-            {final_answer_format_instruction}            """
+            ### Step 2: Final Rationale and Probabilistic Thinking
+            Provide your final, comprehensive rationale. Explain how you are balancing the competing causal forces. Your reasoning should be granular, distinguishing between multiple degrees of uncertainty. Acknowledge what you still don't know and what key indicators could change your mind in the future.
+
+            ### Step 3: Final Calibrated Prediction
+            Conclude with your final prediction. Update your numerical forecast with precision, reflecting the synthesis above. Ensure it is in the precise format required.
+
+            **Required Output Format:**
+            **Step 1: Synthesis**
+            - [Your discussion on how the critique and new data changed the forecast]
+            **Step 2: Final Rationale**
+            - [Your comprehensive final rationale and remaining uncertainties]
+            **Step 3: Final Prediction**
+            - [Your final prediction in the required format:
+              {final_answer_format_instruction}]
+            """
         )
+
         refined_prediction_text = await self.get_llm("refined_pred_llm", "llm").invoke(prompt)
         logger.info(f"Generated refined prediction for URL {question.page_url}")
         return refined_prediction_text
@@ -314,6 +371,8 @@ class SelfCritiqueForecaster(ForecastBot):
             logger.info(
                 f"Completed self-critique process for URL {question.page_url}"
             )
+
+            self._save_report_to_file(question, full_report)
 
             return full_report
 
@@ -417,7 +476,7 @@ if __name__ == "__main__":
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
         folder_to_save_reports_to=None,
-        skip_previously_forecasted_questions=True,
+        skip_previously_forecasted_questions=False,
         llms={
             "default": GeneralLlm(
                 model="metaculus/openai/gpt-4.1",
@@ -431,17 +490,17 @@ if __name__ == "__main__":
                 temperature=0.3,
                 timeout=80,
                 allowed_tries=2,
-                max_tokens=2048,
+                max_tokens=4096,
             ),
             "critique_llm": GeneralLlm(
                 model="metaculus/anthropic/claude-3-7-sonnet-latest",
                 temperature=1.0,
                 timeout=80,
                 allowed_tries=2,
-                max_tokens=6144,
+                max_tokens=8192,
                 thinking={
                     "type": "enabled",
-                    "budget_tokens": 4096,
+                    "budget_tokens": 5120,
                 },
             ),
             "refined_pred_llm": GeneralLlm(
@@ -449,10 +508,10 @@ if __name__ == "__main__":
                 temperature=1.0,
                 timeout=80,
                 allowed_tries=2,
-                max_tokens=6144,
+                max_tokens=8192,
                 thinking={
                     "type": "enabled",
-                    "budget_tokens": 4096,
+                    "budget_tokens": 5120,
                 },
             ),
             "summarizer": GeneralLlm(
@@ -460,7 +519,7 @@ if __name__ == "__main__":
                 temperature=0.3,
                 timeout=80,
                 allowed_tries=2,
-                max_tokens=2048,
+                max_tokens=4096,
             ),
         },
     )
