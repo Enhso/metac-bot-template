@@ -7,6 +7,7 @@ import re
 from datetime import datetime
 from typing import Literal
 from forecasting_tools import (
+    AskNewsSearcher,
     BinaryQuestion,
     ForecastBot,
     GeneralLlm,
@@ -90,22 +91,25 @@ class SelfCritiqueForecaster(ForecastBot):
 
     def _normalize_probabilities(self, predictions: PredictedOptionList) -> PredictedOptionList:
         """
-        Clamps probabilities to the Metaculus API limits [0.001, 0.999] and re-normalizes.
+        Clamps probabilities to the Metaculus API limits [0.001, 0.999] and re-normalizes
+        with a robust method to ensure the sum is exactly 1.0.
         """
+        if not predictions.predicted_options:
+            return predictions
+
         min_prob = 0.001
         max_prob = 0.999
 
-        # Clamp values that are too low or too high
         for p in predictions.predicted_options:
-            if p.probability < min_prob:
-                p.probability = min_prob
-            if p.probability > max_prob:
-                p.probability = max_prob
+            p.probability = max(min_prob, min(max_prob, p.probability))
 
-        # Re-normalize to ensure the sum is 1.0
         total = sum(p.probability for p in predictions.predicted_options)
-        for p in predictions.predicted_options:
-            p.probability /= total
+        if total > 0:
+            for p in predictions.predicted_options:
+                p.probability /= total
+
+        sum_except_last = sum(p.probability for p in predictions.predicted_options[:-1])
+        predictions.predicted_options[-1].probability = 1.0 - sum_except_last
 
         return predictions
 
@@ -386,12 +390,15 @@ class SelfCritiqueForecaster(ForecastBot):
             f"Extracted final prediction for URL {question.page_url}: {prediction}"
         )
         return ReasonedPrediction(
-            prediction_value=prediction, reasoning=research # The whole report is the reasoning
+            prediction_value=prediction, reasoning=research
         )
 
     async def _run_forecast_on_multiple_choice(
         self, question: MultipleChoiceQuestion, research: str
     ) -> ReasonedPrediction[PredictedOptionList]:
+        prediction = PredictionExtractor.extract_option_list_with_percentage_afterwards(
+            research, question.options
+        )
         prediction = PredictionExtractor.extract_option_list_with_percentage_afterwards(
             research, question.options
         )
@@ -402,6 +409,9 @@ class SelfCritiqueForecaster(ForecastBot):
     async def _run_forecast_on_numeric(
         self, question: NumericQuestion, research: str
     ) -> ReasonedPrediction[NumericDistribution]:
+        dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
+            research, question
+        )
         dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
             research, question
         )
@@ -479,21 +489,25 @@ if __name__ == "__main__":
         skip_previously_forecasted_questions=False,
         llms={
             "default": GeneralLlm(
-                model="metaculus/openai/gpt-4.1",
+                model="openrouter/openai/gpt-5",
                 temperature=0.3,
                 timeout=80,
                 allowed_tries=2,
                 max_tokens=1024,
             ),
             "initial_pred_llm": GeneralLlm(
-                model="metaculus/openai/gpt-4.1",
+                model="openrouter/openai/gpt-5",
                 temperature=0.3,
                 timeout=80,
                 allowed_tries=2,
-                max_tokens=4096,
+                max_tokens=8192,
+                thinking={
+                    "type": "enabled",
+                    "budget_tokens": 5120,
+                },
             ),
             "critique_llm": GeneralLlm(
-                model="metaculus/anthropic/claude-3-7-sonnet-latest",
+                model="openrouter/anthropic/claude-opus-4.1",
                 temperature=1.0,
                 timeout=80,
                 allowed_tries=2,
@@ -504,7 +518,7 @@ if __name__ == "__main__":
                 },
             ),
             "refined_pred_llm": GeneralLlm(
-                model="metaculus/anthropic/claude-3-7-sonnet-latest",
+                model="openrouter/anthropic/claude-opus-4.1",
                 temperature=1.0,
                 timeout=80,
                 allowed_tries=2,
@@ -515,12 +529,18 @@ if __name__ == "__main__":
                 },
             ),
             "summarizer": GeneralLlm(
-                model="metaculus/openai/gpt-4.1",
+                model="openrouter/openai/gpt-5",
                 temperature=0.3,
                 timeout=80,
                 allowed_tries=2,
                 max_tokens=4096,
             ),
+            "parser": GeneralLlm(
+                model="openrouter/openai/gpt-5",
+                temperature=0.1,
+                max_tokens=2048,
+            ),
+            "researcher": "asknews/deep-research/high"
         },
     )
 
@@ -545,7 +565,7 @@ if __name__ == "__main__":
             "https://www.metaculus.com/questions/578/human-extinction-by-2100/",  # Human Extinction - Binary
             "https://www.metaculus.com/questions/14333/age-of-oldest-human-as-of-2100/",  # Age of Oldest Human - Numeric
             "https://www.metaculus.com/questions/22427/number-of-new-leading-ai-labs/",  # Number of New Leading AI Labs - Multiple Choice
-  #          "https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029        ]
+            "https://www.metaculus.com/c/diffusion-community/38880/how-many-us-labor-strikes-due-to-ai-in-2029/",  # Number of US Labor Strikes Due to AI in 2029        ]
         ]
         bot_one.skip_previously_forecasted_questions = False
         questions = [
