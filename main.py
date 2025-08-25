@@ -245,7 +245,7 @@ class SelfCritiqueForecaster(ForecastBot):
     ) -> str:
         if isinstance(question, MultipleChoiceQuestion):
             final_answer_format_instruction = f"""
-                - For the multiple choice question, list each option with its probability. You MUST use the exact option text provided.
+                - For the multiple choice question, list each option with its probability. You MUST use the exact option text provided. All probabilities must be between 0.001 and 0.999 and sum to 1.0.
                   Example:
                   "0 or 1": 10%
                   "2 or 3": 70%
@@ -265,7 +265,7 @@ class SelfCritiqueForecaster(ForecastBot):
             """
         else: # BinaryQuestion
             final_answer_format_instruction = """
-                - For the binary question: "Probability: ZZ%"
+                - For the binary question: "Probability: ZZ%". All probabilities must be between 0.001 and 0.999.
             """
 
         prompt = clean_indents(
@@ -325,22 +325,20 @@ class SelfCritiqueForecaster(ForecastBot):
             # STEP 1: Initial, broad research.
             initial_research = ""
             if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
-                sdk = AsyncAskNewsSDK(
-                    client_id=os.getenv("ASKNEWS_CLIENT_ID"),
-                    client_secret=os.getenv("ASKNEWS_SECRET"),
-                )
                 try:
-                    logger.info(f"Performing comprehensive initial search for {question.page_url}")
-                    results = await sdk.news.search_news(
-                        query=question.question_text, n_articles=10, strategy="news knowledge"
+                    logger.info(f"Performing high-depth DeepNews research for {question.page_url}")
+                    initial_research = await AskNewsSearcher().get_formatted_deep_research(
+                        query=question.question_text,
+                        sources=["asknews"],
+                        search_depth=2,
+                        max_depth=2,
+                        model="deepseek-basic",
                     )
-                    initial_research = results.as_string if results.as_string is not None else "No results found."
                 except Exception as e:
                     logger.error(f"Initial research for {question.page_url} failed: {e}", exc_info=True)
                     initial_research = f"An error occurred during initial research: {e}"
             else:
-                logger.warning(f"No research provider found for URL {question.page_url}.")
-            # STEP 2: Generate Initial Prediction
+                logger.warning(f"No research provider found for URL {question.page_url}.")            # STEP 2: Generate Initial Prediction
             initial_prediction_text = await self._generate_initial_prediction(question, initial_research)
 
             # STEP 3: Generate Adversarial Critique
@@ -396,9 +394,6 @@ class SelfCritiqueForecaster(ForecastBot):
     async def _run_forecast_on_multiple_choice(
         self, question: MultipleChoiceQuestion, research: str
     ) -> ReasonedPrediction[PredictedOptionList]:
-        prediction = PredictionExtractor.extract_option_list_with_percentage_afterwards(
-            research, question.options
-        )
         prediction = PredictionExtractor.extract_option_list_with_percentage_afterwards(
             research, question.options
         )
@@ -540,7 +535,7 @@ if __name__ == "__main__":
                 temperature=0.1,
                 max_tokens=2048,
             ),
-            "researcher": "asknews/deep-research/high"
+            "researcher": "asknews/deep-research/high-depth",
         },
     )
 

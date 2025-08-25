@@ -10,11 +10,11 @@ package-mode = false
 python = "^3.11"
 python-decouple = "^3.8"
 requests = "^2.32.3"
-asknews = "^0.9.1"
+asknews = "^0.11.6"
 numpy = "^1.26.0"
 openai = "^1.57.4"
 python-dotenv = "^1.0.1"
-forecasting-tools = {git = "https://github.com/metaculus/forecasting-tools.git"}
+forecasting-tools = { git = "https://github.com/metaculus/forecasting-tools.git" }
 
 
 [tool.poetry.group.dev.dependencies]
@@ -23,4 +23,3 @@ ipykernel = "^6.29.5"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
