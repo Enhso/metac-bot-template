@@ -89,6 +89,7 @@ class SelfCritiqueForecaster(ForecastBot):
         except IOError as e:
             logger.error(f"Failed to save report to file '{file_path}': {e}")
 
+
     def _normalize_probabilities(self, predictions: PredictedOptionList) -> PredictedOptionList:
         """
         Clamps probabilities to the Metaculus API limits [0.001, 0.999] and re-normalizes
@@ -107,6 +108,11 @@ class SelfCritiqueForecaster(ForecastBot):
         if total > 0:
             for p in predictions.predicted_options:
                 p.probability /= total
+
+        final_total = sum(p.probability for p in predictions.predicted_options)
+        if final_total > 0:
+            for p in predictions.predicted_options:
+                p.probability /= final_total
 
         sum_except_last = sum(p.probability for p in predictions.predicted_options[:-1])
         predictions.predicted_options[-1].probability = 1.0 - sum_except_last
@@ -322,24 +328,25 @@ class SelfCritiqueForecaster(ForecastBot):
         Orchestrates the entire "self-critique" forecasting process.
         """
         async with self._concurrency_limiter:
-            # STEP 1: Initial, broad research.
-            initial_research = ""
-            if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
-                try:
-                    logger.info(f"Performing high-depth DeepNews research for {question.page_url}")
-                    initial_research = await AskNewsSearcher().get_formatted_deep_research(
-                        query=question.question_text,
-                        sources=["asknews"],
-                        search_depth=2,
-                        max_depth=2,
-                        model="deepseek-basic",
-                    )
-                except Exception as e:
-                    logger.error(f"Initial research for {question.page_url} failed: {e}", exc_info=True)
-                    initial_research = f"An error occurred during initial research: {e}"
-            else:
-                logger.warning(f"No research provider found for URL {question.page_url}.")            # STEP 2: Generate Initial Prediction
-            initial_prediction_text = await self._generate_initial_prediction(question, initial_research)
+          # STEP 1: Initial, broad research.
+          initial_research = ""
+          if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
+              sdk = AsyncAskNewsSDK(
+                  client_id=os.getenv("ASKNEWS_CLIENT_ID"),
+                  client_secret=os.getenv("ASKNEWS_SECRET"),
+              )
+              try:
+                  logger.info(f"Performing comprehensive initial search for {question.page_url}")
+                  results = await sdk.news.search_news(
+                      query=question.question_text, n_articles=10, strategy="news knowledge"
+                  )
+                  initial_research = results.as_string if results.as_string is not None else "No results found."
+              except Exception as e:
+                  logger.error(f"Initial research for {question.page_url} failed: {e}", exc_info=True)
+                  initial_research = f"An error occurred during initial research: {e}"
+          else:
+              logger.warning(f"No research provider found for URL {question.page_url}.")
+              initial_prediction_text = await self._generate_initial_prediction(question, initial_research)
 
             # STEP 3: Generate Adversarial Critique
             critique_text = await self._generate_adversarial_critique(question, initial_prediction_text)
@@ -404,9 +411,6 @@ class SelfCritiqueForecaster(ForecastBot):
     async def _run_forecast_on_numeric(
         self, question: NumericQuestion, research: str
     ) -> ReasonedPrediction[NumericDistribution]:
-        dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
-            research, question
-        )
         dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
             research, question
         )
