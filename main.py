@@ -245,7 +245,7 @@ class SelfCritiqueForecaster(ForecastBot):
     ) -> str:
         if isinstance(question, MultipleChoiceQuestion):
             final_answer_format_instruction = f"""
-                - For the multiple choice question, list each option with its probability. You MUST use the exact option text provided. All probabilities must be between 0.001 and 0.999 and sum to 1.0.
+                - For the multiple choice question, list each option with its probability. You MUST use the exact option text provided. All probabilities must be between 0.1% and 99.9% and sum to 1.0.
                   Example:
                   "0 or 1": 10%
                   "2 or 3": 70%
@@ -265,7 +265,7 @@ class SelfCritiqueForecaster(ForecastBot):
             """
         else: # BinaryQuestion
             final_answer_format_instruction = """
-                - For the binary question: "Probability: ZZ%". All probabilities must be between 0.001 and 0.999.
+                - For the binary question: "Probability: ZZ%". All probabilities must be between 0.1% and 99.9%.
             """
 
         prompt = clean_indents(
@@ -481,7 +481,7 @@ if __name__ == "__main__":
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
         folder_to_save_reports_to=None,
-        skip_previously_forecasted_questions=False,
+        skip_previously_forecasted_questions=True,
         llms={
             "default": GeneralLlm(
                 model="openrouter/openai/gpt-5",
