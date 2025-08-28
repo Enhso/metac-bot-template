@@ -328,25 +328,26 @@ class SelfCritiqueForecaster(ForecastBot):
         Orchestrates the entire "self-critique" forecasting process.
         """
         async with self._concurrency_limiter:
-          # STEP 1: Initial, broad research.
-          initial_research = ""
-          if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
-              sdk = AsyncAskNewsSDK(
-                  client_id=os.getenv("ASKNEWS_CLIENT_ID"),
-                  client_secret=os.getenv("ASKNEWS_SECRET"),
-              )
-              try:
-                  logger.info(f"Performing comprehensive initial search for {question.page_url}")
-                  results = await sdk.news.search_news(
-                      query=question.question_text, n_articles=10, strategy="news knowledge"
-                  )
-                  initial_research = results.as_string if results.as_string is not None else "No results found."
-              except Exception as e:
-                  logger.error(f"Initial research for {question.page_url} failed: {e}", exc_info=True)
-                  initial_research = f"An error occurred during initial research: {e}"
-          else:
-              logger.warning(f"No research provider found for URL {question.page_url}.")
-              initial_prediction_text = await self._generate_initial_prediction(question, initial_research)
+            # STEP 1: Initial, broad research.
+            initial_research = ""
+            if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
+                sdk = AsyncAskNewsSDK(
+                    client_id=os.getenv("ASKNEWS_CLIENT_ID"),
+                    client_secret=os.getenv("ASKNEWS_SECRET"),
+                )
+                try:
+                    logger.info(f"Performing comprehensive initial search for {question.page_url}")
+                    results = await sdk.news.search_news(
+                        query=question.question_text, n_articles=10, strategy="news knowledge"
+                    )
+                    initial_research = results.as_string if results.as_string is not None else "No results found."
+                except Exception as e:
+                    logger.error(f"Initial research for {question.page_url} failed: {e}", exc_info=True)
+                    initial_research = f"An error occurred during initial research: {e}"
+            else:
+                logger.warning(f"No research provider found for URL {question.page_url}.")
+
+            initial_prediction_text = await self._generate_initial_prediction(question, initial_research)
 
             # STEP 3: Generate Adversarial Critique
             critique_text = await self._generate_adversarial_critique(question, initial_prediction_text)
@@ -381,9 +382,12 @@ class SelfCritiqueForecaster(ForecastBot):
                 f"Completed self-critique process for URL {question.page_url}"
             )
 
+            comment = f"""
+{refined_prediction_text}
+"""
             self._save_report_to_file(question, full_report)
 
-            return full_report
+            return comment
 
     async def _run_forecast_on_binary(
         self, question: BinaryQuestion, research: str
