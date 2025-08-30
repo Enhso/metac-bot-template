@@ -440,15 +440,20 @@ class SelfCritiqueForecaster(ForecastBot):
         return upper_bound_message, lower_bound_message
 
     @classmethod
-    def _llm_config_defaults(cls) -> dict[str, str | GeneralLlm]:
+    def _llm_config_defaults(cls) -> dict[str, str | GeneralLlm | None]:
         """
         Returns a dictionary of default llms for the bot.
         """
         defaults = super()._llm_config_defaults()
+        assert defaults.get("default") is not None,
         defaults.update({
             "initial_pred_llm": defaults["default"],
             "critique_llm": defaults["default"],
             "refined_pred_llm": defaults["default"],
+            "keyword_extractor_llm": defaults["default"],
+            "summarizer": defaults["default"],
+            "parser": defaults["default"],
+            "researcher": defaults["default"],
         })
         return defaults
 
@@ -530,6 +535,13 @@ if __name__ == "__main__":
                     "type": "enabled",
                     "budget_tokens": 5120,
                 },
+            ),
+            "keyword_extractor_llm": GeneralLlm(
+                model="openrouter/openai/gpt-5-mini",
+                temperature=0.0,
+                timeout=80,
+                allowed_tries=2,
+                max_tokens=256,
             ),
             "summarizer": GeneralLlm(
                 model="openrouter/openai/gpt-5",
