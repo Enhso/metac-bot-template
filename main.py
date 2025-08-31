@@ -244,7 +244,8 @@ class SelfCritiqueForecaster(ForecastBot):
 
     async def _perform_targeted_search(self, critique_text: str) -> str:
         """
-        Performs a targeted search based on the questions raised in the critique.
+        Performs separate, targeted searches for each question raised in the critique
+        and combines the results into a structured report.
         """
         extraction_prompt = clean_indents(
             f"""
@@ -264,28 +265,44 @@ class SelfCritiqueForecaster(ForecastBot):
             logger.warning("No new research questions were generated from the critique.")
             return "No targeted search was performed as no new questions were identified."
 
-        # Asynchronously extract keywords for each question
-        keyword_extraction_tasks = [self._extract_keywords_for_search(q) for q in questions]
-        keyword_lists = await asyncio.gather(*keyword_extraction_tasks)
-
-        # Combine all unique keywords into a single query
-        unique_keywords = set()
-        for keywords in keyword_lists:
-            unique_keywords.update(keywords.split())
-
-        combined_query = " ".join(sorted(list(unique_keywords)))
-
-        logger.info(f"Performing targeted search with combined keywords: {combined_query}")
-
         sdk = AsyncAskNewsSDK(
-          client_id=os.getenv("ASKNEWS_CLIENT_ID"),
-          client_secret=os.getenv("ASKNEWS_SECRET"),)
-        try:
-            results = await sdk.news.search_news(query=combined_query, n_articles=5, strategy="news knowledge")
-            return results.as_string if results.as_string is not None else "No results found."
-        except Exception as e:
-            logger.error(f"Targeted search failed with an error: {e}")
-            return "An error occurred during the targeted search."
+            client_id=os.getenv("ASKNEWS_CLIENT_ID"),
+            client_secret=os.getenv("ASKNEWS_SECRET"),
+        )
+
+        # This inner function will handle the search for a single question
+        async def search_for_question(question: str) -> str:
+            keywords = await self._extract_keywords_for_search(question)
+            log_query = keywords if keywords != question else f"(fallback) {question}"
+            logger.info(f"Performing targeted search for: {log_query}")
+
+            try:
+                # Perform a focused search with fewer articles
+                results = await sdk.news.search_news(queryEnsemble of Virtual Analysts=keywords, n_articles=3, strategy="news knowledge")
+                search_results_string = results.as_string if results.as_string is not None else "No results found."
+
+                # Format the output clearly, associating results with the original question
+                return f"### Research for question: \"{question}\"\n\n{search_results_string}"
+            except Exception as e:
+                logger.error(f"Targeted search for '{question}' failed with an error: {e}")
+                return f"### Research for question: \"{question}\"\n\nAn error occurred during the targeted search."
+
+        individual_reports = []
+        for question in questions:
+            # 1. Perform a single search request and wait for it to complete.
+            report = await search_for_question(question)
+            individual_reports.append(report)
+
+            # 2. Pause for 10 seconds before starting the next loop iteration.
+            logger.info(f"AskNews rate limit: Pausing for 10 seconds after targeted search for question: \"{question[:50]}...\"")
+            await asyncio.sleep(10)
+
+        # Join the individual, formatted reports into a single string
+        # This provides a clean, structured input for the final synthesis step
+        combined_report = "\n\n---\n\n".join(individual_reports)
+
+        logger.info("Completed all targeted searches.")
+        return combined_report
 
     async def _generate_refined_prediction(
         self,
@@ -389,6 +406,8 @@ class SelfCritiqueForecaster(ForecastBot):
                         query=search_query, n_articles=10, strategy="news knowledge"
                     )
                     initial_research = results.as_string if results.as_string is not None else "No results found."
+                    logger.info("AskNews rate limit: Pausing for 10 seconds after initial research call.")
+                    await asyncio.sleep(10)
                 except Exception as e:
                     logger.error(f"Initial research for {question.page_url} failed: {e}", exc_info=True)
                     initial_research = f"An error occurred during initial research: {e}"
