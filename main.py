@@ -119,6 +119,40 @@ class SelfCritiqueForecaster(ForecastBot):
 
         return predictions
 
+    async def _extract_keywords_for_search(self, text: str) -> str:
+        """
+        Uses a lightweight LLM to extract key entities and concepts for a targeted news search.
+        """
+        prompt = clean_indents(
+            f"""
+            Your task is to extract critical search keywords from the user's text.
+            Do not add any explanation, preamble, or formatting.
+            Your entire response must be a single line of space-separated keywords.
+
+            Here is an example:
+            Text: "Will the US Federal Reserve raise interest rates in the next quarter of 2025 due to inflation concerns?"
+            Keywords: US Federal Reserve interest rates 2025 inflation
+
+            Now, perform this task on the following text:
+            Text: "{text}"
+            Keywords:
+            """
+        )
+        try:
+            keywords = await self.get_llm("keyword_extractor_llm", "llm").invoke(prompt)
+
+            if not keywords or not keywords.strip():
+                logger.warning(
+                    f"Keyword extraction with model '{self.get_llm('keyword_extractor_llm', 'llm').model}' returned an empty string. Falling back to original text."
+                )
+                return text
+
+            logger.info(f"Extracted keywords: {keywords.strip()}")
+            return keywords.strip()
+
+        except Exception as e:
+            logger.error(f"Failed to extract keywords due to an API error: {e}. Falling back to original text.")
+            return text
     async def _generate_initial_prediction(
         self, question: MetaculusQuestion, initial_research: str
     ) -> str:
@@ -224,18 +258,30 @@ class SelfCritiqueForecaster(ForecastBot):
             """
         )
         questions_text = await self.get_llm("summarizer", "llm").invoke(extraction_prompt)
+        questions = [q for q in questions_text.splitlines() if q.strip()]
 
-        if not questions_text.strip():
+        if not questions:
             logger.warning("No new research questions were generated from the critique.")
             return "No targeted search was performed as no new questions were identified."
 
-        logger.info(f"Performing targeted search with queries: {questions_text.splitlines()}")
+        # Asynchronously extract keywords for each question
+        keyword_extraction_tasks = [self._extract_keywords_for_search(q) for q in questions]
+        keyword_lists = await asyncio.gather(*keyword_extraction_tasks)
+
+        # Combine all unique keywords into a single query
+        unique_keywords = set()
+        for keywords in keyword_lists:
+            unique_keywords.update(keywords.split())
+
+        combined_query = " ".join(sorted(list(unique_keywords)))
+
+        logger.info(f"Performing targeted search with combined keywords: {combined_query}")
 
         sdk = AsyncAskNewsSDK(
           client_id=os.getenv("ASKNEWS_CLIENT_ID"),
           client_secret=os.getenv("ASKNEWS_SECRET"),)
         try:
-            results = await sdk.news.search_news(query=questions_text, n_articles=5, strategy="news knowledge")
+            results = await sdk.news.search_news(query=combined_query, n_articles=5, strategy="news knowledge")
             return results.as_string if results.as_string is not None else "No results found."
         except Exception as e:
             logger.error(f"Targeted search failed with an error: {e}")
@@ -336,9 +382,11 @@ class SelfCritiqueForecaster(ForecastBot):
                     client_secret=os.getenv("ASKNEWS_SECRET"),
                 )
                 try:
-                    logger.info(f"Performing comprehensive initial search for {question.page_url}")
+                    # Extract keywords from the main question for a better search query
+                    search_query = await self._extract_keywords_for_search(question.question_text)
+                    logger.info(f"Performing comprehensive initial search for '{question.page_url}' with query: '{search_query}'")
                     results = await sdk.news.search_news(
-                        query=question.question_text, n_articles=10, strategy="news knowledge"
+                        query=search_query, n_articles=10, strategy="news knowledge"
                     )
                     initial_research = results.as_string if results.as_string is not None else "No results found."
                 except Exception as e:
@@ -445,7 +493,7 @@ class SelfCritiqueForecaster(ForecastBot):
         Returns a dictionary of default llms for the bot.
         """
         defaults = super()._llm_config_defaults()
-        assert defaults.get("default") is not None,
+        assert defaults.get("default") is not None
         defaults.update({
             "initial_pred_llm": defaults["default"],
             "critique_llm": defaults["default"],
@@ -538,7 +586,7 @@ if __name__ == "__main__":
             ),
             "keyword_extractor_llm": GeneralLlm(
                 model="openrouter/openai/gpt-5-mini",
-                temperature=0.0,
+                temperature=0.1,
                 timeout=80,
                 allowed_tries=2,
                 max_tokens=256,

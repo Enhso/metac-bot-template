@@ -68,14 +68,14 @@ async def benchmark_forecast_bot(mode: str) -> None:
               "default": GeneralLlm(
                   model="openrouter/openai/gpt-5",
                   temperature=0.3,
-                  timeout=160,
+                  timeout=80,
                   allowed_tries=2,
                   max_tokens=1024,
               ),
               "initial_pred_llm": GeneralLlm(
                   model="openrouter/openai/gpt-5",
                   temperature=0.3,
-                  timeout=160,
+                  timeout=80,
                   allowed_tries=2,
                   max_tokens=8192,
                   thinking={
@@ -86,7 +86,7 @@ async def benchmark_forecast_bot(mode: str) -> None:
               "critique_llm": GeneralLlm(
                   model="openrouter/anthropic/claude-opus-4.1",
                   temperature=1.0,
-                  timeout=160,
+                  timeout=80,
                   allowed_tries=2,
                   max_tokens=8192,
                   thinking={
@@ -97,7 +97,7 @@ async def benchmark_forecast_bot(mode: str) -> None:
               "refined_pred_llm": GeneralLlm(
                   model="openrouter/anthropic/claude-opus-4.1",
                   temperature=1.0,
-                  timeout=160,
+                  timeout=80,
                   allowed_tries=2,
                   max_tokens=8192,
                   thinking={
@@ -105,10 +105,17 @@ async def benchmark_forecast_bot(mode: str) -> None:
                       "budget_tokens": 5120,
                   },
               ),
+              "keyword_extractor_llm": GeneralLlm(
+                  model="openrouter/openai/gpt-5-mini",
+                  temperature=0.1,
+                  timeout=80,
+                  allowed_tries=2,
+                  max_tokens=256,
+              ),
               "summarizer": GeneralLlm(
                   model="openrouter/openai/gpt-5",
                   temperature=0.3,
-                  timeout=160,
+                  timeout=80,
                   allowed_tries=2,
                   max_tokens=4096,
               ),
