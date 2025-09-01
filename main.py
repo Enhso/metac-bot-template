@@ -3,12 +3,10 @@ import asyncio
 import logging
 import os
 import re
-import random
 
 from datetime import datetime
 from typing import Literal, Sequence
 from forecasting_tools import (
-    AskNewsSearcher,
     BinaryQuestion,
     ForecastBot,
     ForecastReport,
@@ -913,13 +911,14 @@ if __name__ == "__main__":
         help="Specify the run mode (default: tournament)",
     )
     args = parser.parse_args()
-    run_mode: Literal["tournament", "quarterly_cup", "test_questions"] = (
+    run_mode: Literal["tournament", "quarterly_cup", "test_questions", "minibench"] = (
         args.mode
     )
     assert run_mode in [
         "tournament",
         "quarterly_cup",
         "test_questions",
+        "minibench",
     ], "Invalid run mode"
 
     bot_one = EnsembleForecaster(
@@ -1023,6 +1022,12 @@ if __name__ == "__main__":
         ]
         forecast_reports = asyncio.run(
             bot_one.forecast_questions(questions, return_exceptions=True)
+        )
+    elif run_mode == "minibench":
+        forecast_reports = asyncio.run(
+            bot_one.forecast_on_tournament(
+                MetaculusApi.CURRENT_MINIBENCH_ID, return_exceptions=True
+            )
         )
 
     EnsembleForecaster.log_report_summary(forecast_reports)
