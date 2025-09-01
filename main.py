@@ -906,7 +906,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["tournament", "quarterly_cup", "test_questions"],
+        choices=["tournament", "quarterly_cup", "test_questions", "minibench"],
         default="tournament",
         help="Specify the run mode (default: tournament)",
     )
