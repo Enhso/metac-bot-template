@@ -3,13 +3,15 @@ import asyncio
 import logging
 import os
 import re
+import random
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Sequence
 from forecasting_tools import (
     AskNewsSearcher,
     BinaryQuestion,
     ForecastBot,
+    ForecastReport,
     GeneralLlm,
     MetaculusApi,
     MetaculusQuestion,
@@ -20,6 +22,7 @@ from forecasting_tools import (
     PredictionExtractor,
     ReasonedPrediction,
     clean_indents,
+    Notepad
 )
 from asknews_sdk import AsyncAskNewsSDK
 
@@ -61,7 +64,90 @@ class SelfCritiqueForecaster(ForecastBot):
     _max_concurrent_questions = 1  # Set this to whatever works for your search-provider/ai-model rate limits
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
-# In main.py, add this new method inside the SelfCritiqueForecaster class
+    @classmethod
+    def log_report_summary(
+        cls,
+        forecast_reports: Sequence[ForecastReport | BaseException],
+        raise_errors: bool = True,
+    ) -> None:
+        """
+        A specialized logger for the EnsembleForecaster that understands the structure
+        of its synthesized reports.
+        """
+        valid_reports = [
+            report for report in forecast_reports if isinstance(report, ForecastReport)
+        ]
+
+        full_summary = "\n"
+        full_summary += "-" * 100 + "\n"
+
+        for report in valid_reports:
+            # This is the key change: we don't try to parse sections like .summary
+            # We just display the whole explanation.
+            question_summary = clean_indents(
+                f"""
+                URL: {report.question.page_url}
+                Errors: {report.errors}
+                <<<<<<<<<<<<<<<<<<<< Synthesized Ensemble Report >>>>>>>>>>>>>>>>>>>>>
+                {report.explanation[:10000]}
+                -------------------------------------------------------------------------------------------
+            """
+            )
+            full_summary += question_summary + "\n"
+
+        full_summary += f"Bot: {cls.__name__}\n"
+        for report in forecast_reports:
+            if isinstance(report, ForecastReport):
+                short_summary = f"✅ URL: {report.question.page_url} | Minor Errors: {len(report.errors)}"
+            else:
+                exception_message = (
+                    str(report)
+                    if len(str(report)) < 1000
+                    else f"{str(report)[:500]}...{str(report)[-500:]}"
+                )
+                short_summary = f"❌ Exception: {report.__class__.__name__} | Message: {exception_message}"
+            full_summary += short_summary + "\n"
+
+        total_cost = sum(
+            report.price_estimate if report.price_estimate else 0
+            for report in valid_reports
+        )
+        average_minutes = (
+            (
+                sum(
+                    report.minutes_taken if report.minutes_taken else 0
+                    for report in valid_reports
+                )
+                / len(valid_reports)
+            )
+            if valid_reports
+            else 0
+        )
+        average_cost = total_cost / len(valid_reports) if valid_reports else 0
+        full_summary += "\nStats for passing reports:\n"
+        full_summary += f"Total cost estimated: ${total_cost:.5f}\n"
+        full_summary += f"Average cost per question: ${average_cost:.5f}\n"
+        full_summary += (
+            f"Average time spent per question: {average_minutes:.4f} minutes\n"
+        )
+        full_summary += "-" * 100 + "\n\n\n"
+        logger.info(full_summary)
+
+        exceptions = [
+            report for report in forecast_reports if isinstance(report, BaseException)
+        ]
+
+        if exceptions and raise_errors:
+            for exc in exceptions:
+                logger.error(
+                    "Exception occurred during forecasting:\n%s",
+                    "".join(
+                        traceback.format_exception(type(exc), exc, exc.__traceback__)
+                    ),
+                )
+            raise RuntimeError(
+                f"{len(exceptions)} errors occurred while forecasting: {exceptions}"
+            )
 
     def _save_report_to_file(self, question: MetaculusQuestion, report_content: str):
         """
@@ -123,6 +209,14 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         Uses a lightweight LLM to extract key entities and concepts for a targeted news search.
         """
+
+        await asyncio.sleep(1)
+
+        logger.info(f"Attempting to extract keywords from the following text: '{text}'")
+        if not text or not text.strip():
+            logger.warning("Keyword extraction was called with empty text. Skipping LLM call.")
+            return "" # Return an empty string to be handled by the calling function
+
         prompt = clean_indents(
             f"""
             Your task is to extract critical search keywords from the user's text.
@@ -234,7 +328,7 @@ class SelfCritiqueForecaster(ForecastBot):
             1.  **Challenge Core Assumptions:** Identify the 2-3 most critical stated or unstated assumptions in the initial forecast. Why might they be wrong?
             2.  **Propose an Alternative Perspective:** Actively consider the opposite conclusion. What key evidence or alternative interpretation was downplayed or missed entirely?
             3.  **Stress-Test the Outside View:** Was the chosen reference class appropriate? Propose at least one alternative reference class and explain how it might change the forecast.
-            4.  **Generate High-Value Questions:** Conclude with a list of 2-3 specific, researchable questions. These questions should be designed to resolve the greatest points of uncertainty you've identified and have the highest potential to falsify the initial forecast.
+            4.  **Generate High-Value Questions:** Conclude with a list of 2-3 specific, researchable questions. Each question should be self-contained and not refer to any external information. These questions should be designed to resolve the greatest points of uncertainty you've identified and have the highest potential to falsify the initial forecast.
             """
         )
 
@@ -278,7 +372,7 @@ class SelfCritiqueForecaster(ForecastBot):
 
             try:
                 # Perform a focused search with fewer articles
-                results = await sdk.news.search_news(queryEnsemble of Virtual Analysts=keywords, n_articles=3, strategy="news knowledge")
+                results = await sdk.news.search_news(query=keywords, n_articles=3, strategy="news knowledge")
                 search_results_string = results.as_string if results.as_string is not None else "No results found."
 
                 # Format the output clearly, associating results with the original question
@@ -450,6 +544,13 @@ class SelfCritiqueForecaster(ForecastBot):
             )
 
             comment = f"""
+## Initial Prediction
+{initial_prediction_text}
+
+## Adversarial Critique
+{critique_text}
+
+## Final Refined Prediction & Rationale
 {refined_prediction_text}
 """
             self._save_report_to_file(question, full_report)
@@ -524,6 +625,272 @@ class SelfCritiqueForecaster(ForecastBot):
         })
         return defaults
 
+class EnsembleForecaster(SelfCritiqueForecaster):
+    """
+    This bot implements an ensemble strategy by running the forecasting process
+    multiple times, each guided by a different analytical persona. This approach
+    aims to produce more robust forecasts by synthesizing diverse perspectives.
+    """
+    PERSONAS = {
+        "The Skeptic": clean_indents(
+            """
+            ## Your Persona: The Skeptic
+            You are playing the role of a cautious, skeptical analyst. Your primary goal is to identify and prioritize risks, potential failure points, and reasons why the event will *not* happen. Challenge assumptions and focus on the downside.
+            """
+        ),
+        "The Proponent": clean_indents(
+            """
+            ## Your Persona: The Proponent
+            You are playing the role of a forward-looking, optimistic analyst. Your primary goal is to identify catalysts, opportunities, and the strongest arguments for why the event *will* happen. Focus on the upside potential and the driving forces for success.
+            """
+        ),
+        "The Quant": clean_indents(
+            """
+            ## Your Persona: The Quant
+            You are playing the role of a data-driven quantitative analyst. Your reasoning must be strictly grounded in the provided data, base rates, and statistical evidence. Ignore narrative, anecdotal evidence, and qualitative arguments. Focus only on the numbers.
+            """
+        ),
+    }
+
+    async def _initialize_notepad(self, question: MetaculusQuestion) -> Notepad:
+        notepad = await super()._initialize_notepad(question)
+        notepad.note_entries["personas"] = list(self.PERSONAS.keys())
+        return notepad
+
+    async def _run_individual_question(self, question: MetaculusQuestion) -> ForecastReport:
+        """
+        Orchestrates the ensemble forecasting process for a single question.
+        This corrected version performs research once, then analyzes with each persona,
+        and correctly uses the concurrency limiter.
+        """
+        async with self._concurrency_limiter:
+            # --- RESEARCH PHASE (RUNS ONCE PER QUESTION) ---
+            initial_research = await self._get_initial_research(question)
+            initial_prediction_text = await self._generate_initial_prediction(question, initial_research)
+            critique_text = await self._generate_adversarial_critique(question, initial_prediction_text)
+            targeted_research = await self._perform_targeted_search(critique_text)
+
+            # --- ANALYSIS PHASE (RUNS ONCE PER PERSONA) ---
+            persona_reports = []
+            for persona_name in self.PERSONAS:
+                persona_prompt = self.PERSONAS[persona_name]
+                refined_prediction_text = await self._generate_refined_prediction_with_persona(
+                    question,
+                    initial_research,
+                    initial_prediction_text,
+                    critique_text,
+                    targeted_research,
+                    persona_prompt
+                )
+                persona_reports.append((persona_name, refined_prediction_text))
+
+            # --- SYNTHESIS PHASE (RUNS ONCE) ---
+            reasoned_prediction = await self._synthesize_ensemble_forecasts(question, persona_reports)
+
+            # Format the final explanation to meet the validation requirement
+            final_explanation = f"# Final Synthesized Forecast\n\n{reasoned_prediction.reasoning}"
+
+            # Construct the final report object in a type-safe way
+            if isinstance(question, BinaryQuestion):
+                from forecasting_tools.data_models.binary_report import BinaryReport
+                final_report = BinaryReport(
+                    question=question,
+                    prediction=reasoned_prediction.prediction_value,
+                    explanation=final_explanation
+                )
+            elif isinstance(question, MultipleChoiceQuestion):
+                from forecasting_tools.data_models.multiple_choice_report import MultipleChoiceReport
+                final_report = MultipleChoiceReport(
+                    question=question,
+                    prediction=reasoned_prediction.prediction_value,
+                    explanation=final_explanation
+                )
+            elif isinstance(question, NumericQuestion):
+                from forecasting_tools.data_models.numeric_report import NumericReport
+                final_report = NumericReport(
+                    question=question,
+                    prediction=reasoned_prediction.prediction_value,
+                    explanation=final_explanation
+                )
+            else:
+                raise TypeError(f"Unsupported question type for final report construction: {type(question)}")
+
+            # Publish if required
+            if self.publish_reports_to_metaculus:
+                await final_report.publish_report_to_metaculus()
+
+            return final_report
+
+
+    async def _get_initial_research(self, question: MetaculusQuestion) -> str:
+        """Helper to consolidate initial research logic."""
+        initial_research = ""
+        if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
+            sdk = AsyncAskNewsSDK(
+                client_id=os.getenv("ASKNEWS_CLIENT_ID"),
+                client_secret=os.getenv("ASKNEWS_SECRET"),
+            )
+            try:
+                search_query = await self._extract_keywords_for_search(question.question_text)
+                results = await sdk.news.search_news(query=search_query, n_articles=10, strategy="news knowledge")
+                initial_research = results.as_string if results.as_string is not None else "No results found."
+            except Exception as e:
+                logger.error(f"Initial research for {question.page_url} failed: {e}", exc_info=True)
+                initial_research = f"An error occurred during initial research: {e}"
+        return initial_research
+
+    def _get_final_answer_format_instruction(self, question: MetaculusQuestion) -> str:
+        """Helper to get the correct final answer format instruction based on question type."""
+        if isinstance(question, MultipleChoiceQuestion):
+            return f"""
+                - For the multiple choice question, list each option with its probability. You MUST use the exact option text provided. All probabilities must be between 0.1% and 99.9% and sum to 1.0.
+                  Example:
+                  "0 or 1": 10%
+                  "2 or 3": 70%
+                  "4 or more": 20%
+                  The options for this question are: {question.options}
+            """
+        elif isinstance(question, NumericQuestion):
+            return """
+                - For the numeric question, provide the requested percentiles. You MUST ensure the values are in strictly increasing order (10th percentile < 20th < 40th, etc.).
+                  Example:
+                  Percentile 10: 115
+                  Percentile 20: 118
+                  Percentile 40: 122
+                  Percentile 60: 126
+                  Percentile 80: 130
+                  Percentile 90: 135
+            """
+        else:  # BinaryQuestion
+            return """
+                - For the binary question: "Probability: ZZ%". All probabilities must be between 0.1% and 99.9%.
+            """
+
+    async def _generate_refined_prediction_with_persona(
+        self,
+        question: MetaculusQuestion,
+        initial_research: str,
+        initial_prediction_text: str,
+        critique_text: str,
+        targeted_research: str,
+        persona_prompt: str,
+    ) -> str:
+        """
+        Builds the prompt for a refined prediction and injects the persona.
+        """
+        final_answer_format_instruction = self._get_final_answer_format_instruction(question)
+
+        prompt = clean_indents(
+            f"""
+            You are a superforecaster producing a final, synthesized prediction.
+
+            {persona_prompt}
+
+            ## Question
+            {question.question_text}
+
+            ## Background & Resolution Criteria:
+            {question.background_info}
+            {question.resolution_criteria}
+            Today is {datetime.now().strftime("%Y-%m-%d")}.
+
+            ## Dossier
+            ### 1. Initial Research
+            {initial_research}https://www.metaculus.com/questions/38880
+            ### 2. Initial Prediction (Thesis)
+            {initial_prediction_text}
+            ### 3. Adversarial Critique (Antithesis)
+            {critique_text}
+            ### 4. New, Targeted Research
+            {targeted_research}
+
+            ## Your Task:
+            Follow this three-step process to generate your final analysis.
+
+            ### Step 1: Synthesize Thesis, Antithesis, and New Evidence
+            Adopt a "dragonfly eye" perspective. Explicitly discuss how the critique and the targeted research have altered your initial view. Which arguments from the initial forecast still hold, and which have been weakened or overturned? Weigh the conflicting points and synthesize them. Don't just discard one view for another; integrate them.
+
+            ### Step 2: Final Rationale and Probabilistic Thinking
+            Provide your final, comprehensive rationale. Explain how you are balancing the competing causal forces. Your reasoning should be granular, distinguishing between multiple degrees of uncertainty. Acknowledge what you still don't know and what key indicators could change your mind in the future.
+
+            ### Step 3: Final Calibrated Prediction
+            Conclude with your final prediction. Update your numerical forecast with precision, reflecting the synthesis above. Ensure it is in the precise format required.
+
+            **Required Output Format:**
+            **Step 1: Synthesis**
+            - [Your discussion on how the critique and new data changed the forecast]
+            **Step 2: Final Rationale**
+            - [Your comprehensive final rationale and remaining uncertainties]
+            **Step 3: Final Prediction**
+            - [Your final prediction in the required format:
+              {final_answer_format_instruction}]
+            """
+        )
+
+        return await self.get_llm("refined_pred_llm", "llm").invoke(prompt)
+
+    async def _synthesize_ensemble_forecasts(
+        self, question: MetaculusQuestion, persona_reports: list[tuple[str, str]]
+    ) -> ReasonedPrediction:
+        """
+        Takes the reports from all personas and synthesizes them into a final reasoned prediction.
+        """
+        report_texts = []
+        for name, report in persona_reports:
+            report_texts.append(f"--- REPORT FROM {name.upper()} ---\n{report}\n--- END REPORT ---")
+
+        combined_reports = "\n\n".join(report_texts)
+        final_answer_format_instruction = self._get_final_answer_format_instruction(question)
+
+        synthesis_prompt = clean_indents(
+            f"""
+            You are a lead superforecaster responsible for producing a final, definitive forecast. You have received analyses from three of your expert analysts, each with a different cognitive style: a Skeptic, a Proponent, and a Quant.
+
+            Your task is to synthesize their reports, weigh their arguments, resolve contradictions, and produce a single, coherent final rationale and prediction.
+
+            ## The Question
+            {question.question_text}
+
+            ## Analyst Reports
+            {combined_reports}
+
+            ## Your Task
+            1.  **Synthesize Arguments:** Briefly summarize the key arguments from each analyst. Identify points of agreement and disagreement.
+            2.  **Weigh the Evidence:** Critically evaluate the strength of each argument. Which analyst's case is more compelling and why? How do you reconcile their different conclusions?
+            3.  **Final Rationale:** Provide your final, synthesized rationale. It should reflect your judgment after considering all three perspectives.
+            4.  **Final Prediction:** State your final, calibrated prediction in the required format.
+
+            **Required Output Format:**
+            **Step 1: Synthesis of Analyst Views**
+            - [Your summary and comparison of the analyst reports]
+            **Step 2: Weighing the Evidence**
+            - [Your evaluation of the competing arguments]
+            **Step 3: Final Rationale**
+            - [Your comprehensive final rationale]
+            **Step 4: Final Prediction**
+            - [Your final prediction in the required format:
+              {final_answer_format_instruction}]
+            """
+        )
+
+        final_reasoning = await self.get_llm("refined_pred_llm", "llm").invoke(synthesis_prompt)
+        self._save_report_to_file(question, final_reasoning)
+        prediction = self._parse_final_prediction(question, final_reasoning)
+
+        return ReasonedPrediction(prediction_value=prediction, reasoning=final_reasoning)
+
+    def _parse_final_prediction(self, question: MetaculusQuestion, reasoning: str):
+        """Parses the final prediction from the synthesized reasoning in a type-safe way."""
+        if isinstance(question, BinaryQuestion):
+            return PredictionExtractor.extract_last_percentage_value(reasoning, max_prediction=1, min_prediction=0)
+        elif isinstance(question, MultipleChoiceQuestion):
+            return self._normalize_probabilities(PredictionExtractor.extract_option_list_with_percentage_afterwards(reasoning, question.options))
+        elif isinstance(question, NumericQuestion):
+            dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(reasoning, question)
+            dist.declared_percentiles.sort(key=lambda p: p.percentile)
+            return dist
+        raise TypeError(f"Unsupported question type for parsing: {type(question)}")
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
@@ -536,7 +903,7 @@ if __name__ == "__main__":
     litellm_logger.propagate = False
 
     parser = argparse.ArgumentParser(
-        description="Run the Q1TemplateBot forecasting system"
+        description="Run the EnsembleForecaster forecasting system"
     )
     parser.add_argument(
         "--mode",
@@ -555,9 +922,9 @@ if __name__ == "__main__":
         "test_questions",
     ], "Invalid run mode"
 
-    bot_one = SelfCritiqueForecaster(
-        research_reports_per_question=1,
-        predictions_per_research_report=5,
+    bot_one = EnsembleForecaster(
+        research_reports_per_question=3,
+        predictions_per_research_report=1,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
         folder_to_save_reports_to=None,
@@ -604,7 +971,7 @@ if __name__ == "__main__":
                 },
             ),
             "keyword_extractor_llm": GeneralLlm(
-                model="openrouter/openai/gpt-5-mini",
+                model="openrouter/anthropic/claude-3.5-haiku",
                 temperature=0.1,
                 timeout=80,
                 allowed_tries=2,
@@ -657,4 +1024,5 @@ if __name__ == "__main__":
         forecast_reports = asyncio.run(
             bot_one.forecast_questions(questions, return_exceptions=True)
         )
-    SelfCritiqueForecaster.log_report_summary(forecast_reports)
+
+    EnsembleForecaster.log_report_summary(forecast_reports)

@@ -18,7 +18,8 @@ from forecasting_tools import (
     run_benchmark_streamlit_page,
 )
 
-from main import SelfCritiqueForecaster
+from main import EnsembleForecaster
+
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +58,13 @@ async def benchmark_forecast_bot(mode: str) -> None:
         raise ValueError(f"Invalid mode: {mode}")
 
     with MonetaryCostManager() as cost_manager:
-      bot_one = SelfCritiqueForecaster(
-          research_reports_per_question=1,
-          predictions_per_research_report=5,
+      bot_one = EnsembleForecaster(
+          research_reports_per_question=3,
+          predictions_per_research_report=1,
           use_research_summary_to_forecast=False,
           publish_reports_to_metaculus=True,
           folder_to_save_reports_to=None,
-          skip_previously_forecasted_questions=False,
+          skip_previously_forecasted_questions=True,
           llms={
               "default": GeneralLlm(
                   model="openrouter/openai/gpt-5",
@@ -106,7 +107,7 @@ async def benchmark_forecast_bot(mode: str) -> None:
                   },
               ),
               "keyword_extractor_llm": GeneralLlm(
-                  model="openrouter/openai/gpt-5-mini",
+                  model="openrouter/anthropic/claude-3.5-haiku",
                   temperature=0.1,
                   timeout=80,
                   allowed_tries=2,
