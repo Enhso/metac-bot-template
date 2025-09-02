@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import re
+import traceback
 
 from datetime import datetime
 from typing import Literal, Sequence
@@ -946,6 +947,7 @@ if __name__ == "__main__":
                     "type": "enabled",
                     "budget_tokens": 5120,
                 },
+                service_tier="flex",
             ),
             "critique_llm": GeneralLlm(
                 model="openrouter/anthropic/claude-opus-4.1",
@@ -982,6 +984,7 @@ if __name__ == "__main__":
                 timeout=80,
                 allowed_tries=2,
                 max_tokens=4096,
+                service_tier="flex",
             ),
             "parser": GeneralLlm(
                 model="openrouter/openai/gpt-5",
