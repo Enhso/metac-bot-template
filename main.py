@@ -201,6 +201,8 @@ class SelfCritiqueForecaster(ForecastBot):
             f"""
             You are a superforecaster following the principles of Philip Tetlock. Your reasoning must be transparent, self-critical, and grounded in evidence. Your goal is to produce an initial, rigorously derived forecast.
 
+            Today is {datetime.now().strftime("%Y-%m-%d")}.
+
             ## Question:
             {question.question_text}
 
@@ -257,6 +259,8 @@ class SelfCritiqueForecaster(ForecastBot):
         prompt = clean_indents(
             f"""
             You are an intelligence analyst assigned to conduct a "red team" exercise. Your sole purpose is to challenge a colleague's forecast with constructive, aggressive skepticism. Do not be agreeable. Your goal is to expose every potential weakness.
+
+            Today is {datetime.now().strftime("%Y-%m-%d")}.
 
             ## The Original Question:
             {question.question_text}
@@ -379,13 +383,16 @@ class SelfCritiqueForecaster(ForecastBot):
             f"""
             You are a superforecaster producing a final, synthesized prediction. You have reviewed an initial analysis, a skeptical critique, and new targeted research. Your task is to integrate all evidence into a refined forecast, demonstrating intellectual humility and a commitment to "perpetual beta" (continuous improvement).
 
+            Today is {datetime.now().strftime("%Y-%m-%d")}.
+
             ## Question
             {question.question_text}
 
-            ## Background & Resolution Criteria:
+            ## Background
             {question.background_info}
+
+            ## Resolution Criteria
             {question.resolution_criteria}
-            Today is {datetime.now().strftime("%Y-%m-%d")}.
 
             ## Dossier
             ### 1. Initial Research
@@ -728,13 +735,16 @@ class EnsembleForecaster(SelfCritiqueForecaster):
 
             {persona_prompt}
 
+            Today is {datetime.now().strftime("%Y-%m-%d")}.
+
             ## Question
             {question.question_text}
 
-            ## Background & Resolution Criteria:
+            ## Background
             {question.background_info}
+
+            ## Resolution Criteria
             {question.resolution_criteria}
-            Today is {datetime.now().strftime("%Y-%m-%d")}.
 
             ## Dossier
             ### 1. Initial Research
