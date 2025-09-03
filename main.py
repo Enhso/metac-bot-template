@@ -2,7 +2,6 @@ import argparse
 import asyncio
 import logging
 import os
-import re
 import traceback
 
 from datetime import datetime
@@ -23,6 +22,7 @@ from forecasting_tools import (
     clean_indents,
     Notepad
 )
+
 from asknews_sdk import AsyncAskNewsSDK
 
 logger = logging.getLogger(__name__)
@@ -147,62 +147,6 @@ class SelfCritiqueForecaster(ForecastBot):
             raise RuntimeError(
                 f"{len(exceptions)} errors occurred while forecasting: {exceptions}"
             )
-
-    def _save_report_to_file(self, question: MetaculusQuestion, report_content: str):
-        """
-        Saves the provided report content to a uniquely named text file.
-        """
-        output_dir = "forecast_reports"
-        os.makedirs(output_dir, exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-        sanitized_question = re.sub(r'[\\/*?:"<>|]', "", question.question_text)
-        sanitized_question = sanitized_question[:100].strip()
-
-        base_filename = f"{timestamp}_{sanitized_question}"
-        file_path = os.path.join(output_dir, f"{base_filename}.txt")
-        counter = 1
-        while os.path.exists(file_path):
-            file_path = os.path.join(output_dir, f"{base_filename}_{counter}.txt")
-            counter += 1
-
-        try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(report_content)
-            logger.info(f"Successfully saved forecast report to: {file_path}")
-        except IOError as e:
-            logger.error(f"Failed to save report to file '{file_path}': {e}")
-
-
-    def _normalize_probabilities(self, predictions: PredictedOptionList) -> PredictedOptionList:
-        """
-        Clamps probabilities to the Metaculus API limits [0.001, 0.999] and re-normalizes
-        with a robust method to ensure the sum is exactly 1.0.
-        """
-        if not predictions.predicted_options:
-            return predictions
-
-        min_prob = 0.001
-        max_prob = 0.999
-
-        for p in predictions.predicted_options:
-            p.probability = max(min_prob, min(max_prob, p.probability))
-
-        total = sum(p.probability for p in predictions.predicted_options)
-        if total > 0:
-            for p in predictions.predicted_options:
-                p.probability /= total
-
-        final_total = sum(p.probability for p in predictions.predicted_options)
-        if final_total > 0:
-            for p in predictions.predicted_options:
-                p.probability /= final_total
-
-        sum_except_last = sum(p.probability for p in predictions.predicted_options[:-1])
-        predictions.predicted_options[-1].probability = 1.0 - sum_except_last
-
-        return predictions
 
     async def _extract_keywords_for_search(self, text: str) -> str:
         """
@@ -552,7 +496,6 @@ class SelfCritiqueForecaster(ForecastBot):
 ## Final Refined Prediction & Rationale
 {refined_prediction_text}
 """
-            self._save_report_to_file(question, full_report)
 
             return comment
 
@@ -575,9 +518,8 @@ class SelfCritiqueForecaster(ForecastBot):
         prediction = PredictionExtractor.extract_option_list_with_percentage_afterwards(
             research, question.options
         )
-        normalized_prediction = self._normalize_probabilities(prediction)
-        logger.info(f"Extracted and normalized final prediction for URL {question.page_url}: {normalized_prediction}")
-        return ReasonedPrediction(prediction_value=normalized_prediction, reasoning=research)
+        logger.info(f"Extracted final prediction for URL {question.page_url}: {prediction}")
+        return ReasonedPrediction(prediction_value=prediction, reasoning=research)
 
     async def _run_forecast_on_numeric(
         self, question: NumericQuestion, research: str
@@ -873,7 +815,6 @@ class EnsembleForecaster(SelfCritiqueForecaster):
         )
 
         final_reasoning = await self.get_llm("refined_pred_llm", "llm").invoke(synthesis_prompt)
-        self._save_report_to_file(question, final_reasoning)
         prediction = self._parse_final_prediction(question, final_reasoning)
 
         return ReasonedPrediction(prediction_value=prediction, reasoning=final_reasoning)
@@ -883,7 +824,7 @@ class EnsembleForecaster(SelfCritiqueForecaster):
         if isinstance(question, BinaryQuestion):
             return PredictionExtractor.extract_last_percentage_value(reasoning, max_prediction=1, min_prediction=0)
         elif isinstance(question, MultipleChoiceQuestion):
-            return self._normalize_probabilities(PredictionExtractor.extract_option_list_with_percentage_afterwards(reasoning, question.options))
+            return PredictionExtractor.extract_option_list_with_percentage_afterwards(reasoning, question.options)
         elif isinstance(question, NumericQuestion):
             dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(reasoning, question)
             dist.declared_percentiles.sort(key=lambda p: p.percentile)
@@ -927,7 +868,7 @@ if __name__ == "__main__":
         predictions_per_research_report=1,
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=True,
-        folder_to_save_reports_to=None,
+        folder_to_save_reports_to="/home/hatim/projects/metac-bot-template/forecast_reports",
         skip_previously_forecasted_questions=True,
         llms={
             "default": GeneralLlm(
