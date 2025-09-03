@@ -19,10 +19,9 @@ from forecasting_tools import (
 )
 
 from main import EnsembleForecaster
-
+from config.loader import load_bot_config, default_config_path
 
 logger = logging.getLogger(__name__)
-
 
 
 async def benchmark_forecast_bot(mode: str) -> None:
@@ -30,7 +29,7 @@ async def benchmark_forecast_bot(mode: str) -> None:
     Run a benchmark that compares your forecasts against the community prediction
     """
 
-    number_of_questions = 30 # Recommend 100+ for meaningful error bars, but 30 is faster/cheaper
+    number_of_questions = 30  # Recommend 100+ for meaningful error bars, but 30 is faster/cheaper
     if mode == "display":
         run_benchmark_streamlit_page()
         return
@@ -53,89 +52,21 @@ async def benchmark_forecast_bot(mode: str) -> None:
             randomly_sample=True,
         )
         for question in questions:
-            question.background_info = None # Test ability to find new information
+            question.background_info = None  # Test ability to find new information
     else:
         raise ValueError(f"Invalid mode: {mode}")
 
     with MonetaryCostManager() as cost_manager:
-      bot_one = EnsembleForecaster(
-          research_reports_per_question=3,
-          predictions_per_research_report=1,
-          use_research_summary_to_forecast=False,
-          publish_reports_to_metaculus=True,
-          folder_to_save_reports_to=None,
-          skip_previously_forecasted_questions=True,
-          llms={
-              "default": GeneralLlm(
-                  model="openrouter/openai/gpt-5",
-                  temperature=0.3,
-                  timeout=80,
-                  allowed_tries=2,
-                  max_tokens=1024,
-              ),
-              "initial_pred_llm": GeneralLlm(
-                  model="openrouter/openai/gpt-5",
-                  temperature=0.3,
-                  timeout=80,
-                  allowed_tries=2,
-                  max_tokens=8192,
-                  thinking={
-                      "type": "enabled",
-                      "budget_tokens": 5120,
-                  },
-              ),
-              "critique_llm": GeneralLlm(
-                  model="openrouter/anthropic/claude-opus-4.1",
-                  temperature=1.0,
-                  timeout=80,
-                  allowed_tries=2,
-                  max_tokens=8192,
-                  thinking={
-                      "type": "enabled",
-                      "budget_tokens": 5120,
-                  },
-              ),
-              "refined_pred_llm": GeneralLlm(
-                  model="openrouter/anthropic/claude-opus-4.1",
-                  temperature=1.0,
-                  timeout=80,
-                  allowed_tries=2,
-                  max_tokens=8192,
-                  thinking={
-                      "type": "enabled",
-                      "budget_tokens": 5120,
-                  },
-              ),
-              "keyword_extractor_llm": GeneralLlm(
-                  model="openrouter/anthropic/claude-3.5-haiku",
-                  temperature=0.1,
-                  timeout=80,
-                  allowed_tries=2,
-                  max_tokens=256,
-              ),
-              "summarizer": GeneralLlm(
-                  model="openrouter/openai/gpt-5",
-                  temperature=0.3,
-                  timeout=80,
-                  allowed_tries=2,
-                  max_tokens=4096,
-              ),
-              "parser": GeneralLlm(
-                  model="openrouter/openai/gpt-5",
-                  temperature=0.1,
-                  max_tokens=2048,
-              ),
-              "researcher": "asknews/deep-research/high",
-          },
-      )
-      bot_one = typeguard.check_type([bot_one], list[ForecastBot])
-      benchmarks = await Benchmarker(
+        bot_cfg, llms = load_bot_config(default_config_path())
+        bot_one = EnsembleForecaster(llms=llms, **bot_cfg)
+        forecast_bots: list[ForecastBot] = typeguard.check_type([bot_one], list[ForecastBot])
+        benchmarks = await Benchmarker(
             questions_to_use=questions,
-            forecast_bots=bot_one,
+            forecast_bots=forecast_bots,
             file_path_to_save_reports="benchmarks/",
             concurrent_question_batch_size=10,
         ).run_benchmark()
-      for i, benchmark in enumerate(benchmarks):
+        for i, benchmark in enumerate(benchmarks):
             logger.info(
                 f"Benchmark {i+1} of {len(benchmarks)}: {benchmark.name}"
             )
@@ -144,7 +75,7 @@ async def benchmark_forecast_bot(mode: str) -> None:
             )
             logger.info(f"- Total Cost: {benchmark.total_cost}")
             logger.info(f"- Time taken: {benchmark.time_taken_in_minutes}")
-      logger.info(f"Total Cost: {cost_manager.current_usage}")
+        logger.info(f"Total Cost: {cost_manager.current_usage}")
 
 
 if __name__ == "__main__":

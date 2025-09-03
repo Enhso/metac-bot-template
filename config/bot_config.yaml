@@ -1,0 +1,78 @@
+# Bot configuration for EnsembleForecaster
+# You can override the path with: python main.py --config config/bot_config.yaml
+
+bot:
+  research_reports_per_question: 3
+  predictions_per_research_report: 1
+  use_research_summary_to_forecast: false
+  publish_reports_to_metaculus: true
+  folder_to_save_reports_to: "/home/hatim/projects/metac-bot-template/forecast_reports"
+  skip_previously_forecasted_questions: true
+
+llms:
+  default:
+    type: general
+    model: "openrouter/openai/gpt-5"
+    temperature: 0.3
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 1024
+
+  initial_pred_llm:
+    type: general
+    model: "openrouter/openai/gpt-5"
+    temperature: 0.3
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+    service_tier: flex
+
+  critique_llm:
+    type: general
+    model: "openrouter/anthropic/claude-opus-4.1"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+
+  refined_pred_llm:
+    type: general
+    model: "openrouter/anthropic/claude-opus-4.1"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+
+  keyword_extractor_llm:
+    type: general
+    model: "openrouter/anthropic/claude-3.5-haiku"
+    temperature: 0.1
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 256
+
+  summarizer:
+    type: general
+    model: "openrouter/openai/gpt-5"
+    temperature: 0.3
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 4096
+    service_tier: flex
+
+  parser:
+    type: general
+    model: "openrouter/openai/gpt-5"
+    temperature: 0.1
+    max_tokens: 2048
+
+  researcher: "asknews/deep-research/high-depth"

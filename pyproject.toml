@@ -15,6 +15,7 @@ numpy = "^1.26.0"
 openai = "^1.57.4"
 python-dotenv = "^1.0.1"
 forecasting-tools = { git = "https://github.com/metaculus/forecasting-tools.git" }
+PyYAML = "^6.0.2"
 
 
 [tool.poetry.group.dev.dependencies]

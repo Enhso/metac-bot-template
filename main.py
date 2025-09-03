@@ -24,6 +24,7 @@ from forecasting_tools import (
 )
 
 from asknews_sdk import AsyncAskNewsSDK
+from config.loader import load_bot_config, default_config_path
 
 logger = logging.getLogger(__name__)
 
@@ -852,6 +853,12 @@ if __name__ == "__main__":
         default="tournament",
         help="Specify the run mode (default: tournament)",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=str(default_config_path()),
+        help="Path to YAML config file (default: config/bot_config.yaml)",
+    )
     args = parser.parse_args()
     run_mode: Literal["tournament", "quarterly_cup", "test_questions", "minibench"] = (
         args.mode
@@ -863,78 +870,11 @@ if __name__ == "__main__":
         "minibench",
     ], "Invalid run mode"
 
-    bot_one = EnsembleForecaster(
-        research_reports_per_question=3,
-        predictions_per_research_report=1,
-        use_research_summary_to_forecast=False,
-        publish_reports_to_metaculus=True,
-        folder_to_save_reports_to="/home/hatim/projects/metac-bot-template/forecast_reports",
-        skip_previously_forecasted_questions=True,
-        llms={
-            "default": GeneralLlm(
-                model="openrouter/openai/gpt-5",
-                temperature=0.3,
-                timeout=80,
-                allowed_tries=2,
-                max_tokens=1024,
-            ),
-            "initial_pred_llm": GeneralLlm(
-                model="openrouter/openai/gpt-5",
-                temperature=0.3,
-                timeout=80,
-                allowed_tries=2,
-                max_tokens=8192,
-                thinking={
-                    "type": "enabled",
-                    "budget_tokens": 5120,
-                },
-                service_tier="flex",
-            ),
-            "critique_llm": GeneralLlm(
-                model="openrouter/anthropic/claude-opus-4.1",
-                temperature=1.0,
-                timeout=80,
-                allowed_tries=2,
-                max_tokens=8192,
-                thinking={
-                    "type": "enabled",
-                    "budget_tokens": 5120,
-                },
-            ),
-            "refined_pred_llm": GeneralLlm(
-                model="openrouter/anthropic/claude-opus-4.1",
-                temperature=1.0,
-                timeout=80,
-                allowed_tries=2,
-                max_tokens=8192,
-                thinking={
-                    "type": "enabled",
-                    "budget_tokens": 5120,
-                },
-            ),
-            "keyword_extractor_llm": GeneralLlm(
-                model="openrouter/anthropic/claude-3.5-haiku",
-                temperature=0.1,
-                timeout=80,
-                allowed_tries=2,
-                max_tokens=256,
-            ),
-            "summarizer": GeneralLlm(
-                model="openrouter/openai/gpt-5",
-                temperature=0.3,
-                timeout=80,
-                allowed_tries=2,
-                max_tokens=4096,
-                service_tier="flex",
-            ),
-            "parser": GeneralLlm(
-                model="openrouter/openai/gpt-5",
-                temperature=0.1,
-                max_tokens=2048,
-            ),
-            "researcher": "asknews/deep-research/high-depth",
-        },
-    )
+    # Load bot configuration and llms from YAML
+    bot_cfg, llms = load_bot_config(args.config)
+
+    # Construct the forecaster from externalized configuration
+    bot_one = EnsembleForecaster(llms=llms, **bot_cfg)
 
     if run_mode == "tournament":
         forecast_reports = asyncio.run(
