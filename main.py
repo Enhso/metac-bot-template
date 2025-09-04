@@ -22,6 +22,7 @@ from forecasting_tools import (
     clean_indents,
     Notepad
 )
+from critique_strategy import CritiqueAndRefineStrategy
 
 from asknews_sdk import AsyncAskNewsSDK
 from config.loader import load_bot_config, default_config_path
@@ -436,60 +437,30 @@ class SelfCritiqueForecaster(ForecastBot):
         Orchestrates the entire "self-critique" forecasting process.
         """
         async with self._concurrency_limiter:
-            # STEP 1: Initial, broad research.
-            initial_research = ""
-            if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
-                sdk = AsyncAskNewsSDK(
-                    client_id=os.getenv("ASKNEWS_CLIENT_ID"),
-                    client_secret=os.getenv("ASKNEWS_SECRET"),
-                )
-                try:
-                    # Extract keywords from the main question for a better search query
-                    search_query = await self._extract_keywords_for_search(question.question_text)
-                    logger.info(f"Performing comprehensive initial search for '{question.page_url}' with query: '{search_query}'")
-                    results = await sdk.news.search_news(
-                        query=search_query, n_articles=10, strategy="news knowledge"
-                    )
-                    initial_research = results.as_string if results.as_string is not None else "No results found."
-                    logger.info("AskNews rate limit: Pausing for 10 seconds after initial research call.")
-                    await asyncio.sleep(10)
-                except Exception as e:
-                    logger.error(f"Initial research for {question.page_url} failed: {e}", exc_info=True)
-                    initial_research = f"An error occurred during initial research: {e}"
-            else:
-                logger.warning(f"No research provider found for URL {question.page_url}.")
+            # Use the centralized CritiqueAndRefineStrategy for orchestration
+            strategy = CritiqueAndRefineStrategy(self.get_llm, logger)
 
-            initial_prediction_text = await self._generate_initial_prediction(question, initial_research)
+            # STEP 1: Initial, broad research.
+            initial_research = await strategy.initial_research(question)
+
+            # STEP 2: Initial prediction
+            initial_prediction_text = await strategy.generate_initial_prediction(question, initial_research)
 
             # STEP 3: Generate Adversarial Critique
-            critique_text = await self._generate_adversarial_critique(question, initial_prediction_text)
+            critique_text = await strategy.generate_adversarial_critique(question, initial_prediction_text)
 
             # STEP 4: Perform Targeted Search
-            targeted_research = await self._perform_targeted_search(critique_text)
+            targeted_research = await strategy.perform_targeted_search(critique_text)
 
             # STEP 5: Generate Refined Prediction
-            refined_prediction_text = await self._generate_refined_prediction(
-                question, initial_research, initial_prediction_text, critique_text, targeted_research
+            refined_prediction_text = await strategy.generate_refined_prediction(
+                question,
+                initial_research,
+                initial_prediction_text,
+                critique_text,
+                targeted_research,
             )
 
-            full_report = f"""
-# ============== FORECASTING PROCESS REPORT ==============
-## 1. Initial Research
-{initial_research}
-
-## 2. Initial Prediction
-{initial_prediction_text}
-
-## 3. Adversarial Critique
-{critique_text}
-
-## 4. Targeted Research
-{targeted_research}
-
-## 5. Final Refined Prediction & Rationale
-{refined_prediction_text}
-# ================= END OF REPORT =================
-"""
             logger.info(
                 f"Completed self-critique process for URL {question.page_url}"
             )
@@ -614,22 +585,23 @@ class EnsembleForecaster(SelfCritiqueForecaster):
         """
         async with self._concurrency_limiter:
             # --- RESEARCH PHASE (RUNS ONCE PER QUESTION) ---
-            initial_research = await self._get_initial_research(question)
-            initial_prediction_text = await self._generate_initial_prediction(question, initial_research)
-            critique_text = await self._generate_adversarial_critique(question, initial_prediction_text)
-            targeted_research = await self._perform_targeted_search(critique_text)
+            strategy = CritiqueAndRefineStrategy(self.get_llm, logger)
+            initial_research = await strategy.initial_research(question)
+            initial_prediction_text = await strategy.generate_initial_prediction(question, initial_research)
+            critique_text = await strategy.generate_adversarial_critique(question, initial_prediction_text)
+            targeted_research = await strategy.perform_targeted_search(critique_text)
 
             # --- ANALYSIS PHASE (RUNS ONCE PER PERSONA) ---
             persona_reports = []
             for persona_name in self.PERSONAS:
                 persona_prompt = self.PERSONAS[persona_name]
-                refined_prediction_text = await self._generate_refined_prediction_with_persona(
+                refined_prediction_text = await strategy.generate_refined_prediction(
                     question,
                     initial_research,
                     initial_prediction_text,
                     critique_text,
                     targeted_research,
-                    persona_prompt
+                    persona_prompt=persona_prompt,
                 )
                 persona_reports.append((persona_name, refined_prediction_text))
 
