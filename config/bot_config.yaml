@@ -28,7 +28,6 @@ llms:
     thinking:
       type: enabled
       budget_tokens: 5120
-    service_tier: flex
 
   critique_llm:
     type: general
