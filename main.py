@@ -158,6 +158,37 @@ class SelfCritiqueForecaster(ForecastBot):
                 f"{len(exceptions)} errors occurred while forecasting: {exceptions}"
             )
 
+    async def _perform_initial_news_search(self, question_text: str, n_articles: int = 10) -> str:
+        """
+        Performs an initial news search using the AskNews SDK.
+        
+        Args:
+            question_text: The text to extract keywords from for the search
+            n_articles: Number of articles to retrieve (default: 10)
+            
+        Returns:
+            str: The search results as a string, or an error message if the search failed
+        """
+        if not (os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET")):
+            return "AskNews credentials not configured. Skipping initial research."
+            
+        sdk = AsyncAskNewsSDK(
+            client_id=os.getenv("ASKNEWS_CLIENT_ID"),
+            client_secret=os.getenv("ASKNEWS_SECRET"),
+        )
+        
+        try:
+            search_query = await self._extract_keywords_for_search(question_text)
+            results = await sdk.news.search_news(
+                query=search_query, 
+                n_articles=n_articles, 
+                strategy="news knowledge"
+            )
+            return results.as_string if results.as_string is not None else "No results found."
+        except Exception as e:
+            logger.error(f"Initial research failed: {e}", exc_info=True)
+            return f"An error occurred during initial research: {e}"
+
     async def _extract_keywords_for_search(self, text: str) -> str:
         """
         Uses a lightweight LLM to extract key entities and concepts for a targeted news search.
@@ -319,7 +350,7 @@ class SelfCritiqueForecaster(ForecastBot):
             strategy = CritiqueAndRefineStrategy(self.get_llm, logger)
 
             # STEP 1: Initial, broad research.
-            initial_research = await strategy.initial_research(question)
+            initial_research = await self._perform_initial_news_search(question.question_text)
 
             # STEP 2: Initial prediction
             initial_prediction_text = await strategy.generate_initial_prediction(question, initial_research)
@@ -503,21 +534,8 @@ class EnsembleForecaster(SelfCritiqueForecaster):
 
 
     async def _get_initial_research(self, question: MetaculusQuestion) -> str:
-        """Helper to consolidate initial research logic."""
-        initial_research = ""
-        if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
-            sdk = AsyncAskNewsSDK(
-                client_id=os.getenv("ASKNEWS_CLIENT_ID"),
-                client_secret=os.getenv("ASKNEWS_SECRET"),
-            )
-            try:
-                search_query = await self._extract_keywords_for_search(question.question_text)
-                results = await sdk.news.search_news(query=search_query, n_articles=10, strategy="news knowledge")
-                initial_research = results.as_string if results.as_string is not None else "No results found."
-            except Exception as e:
-                logger.error(f"Initial research for {question.page_url} failed: {e}", exc_info=True)
-                initial_research = f"An error occurred during initial research: {e}"
-        return initial_research
+        """Helper to get initial research for a question."""
+        return await self._perform_initial_news_search(question.question_text)
 
     def _get_final_answer_format_instruction(self, question: MetaculusQuestion) -> str:
         """Helper to get the correct final answer format instruction based on question type."""
