@@ -4,8 +4,7 @@ import logging
 import os
 import traceback
 
-from datetime import datetime
-from typing import Literal, Sequence
+from typing import Literal, Sequence, overload
 from forecasting_tools import (
     BinaryQuestion,
     ForecastBot,
@@ -38,39 +37,8 @@ from forecasting_prompts import (
 logger = logging.getLogger(__name__)
 
 class SelfCritiqueForecaster(ForecastBot):
-    """
-    This is a copy of the template bot for Q2 2025 Metaculus AI Tournament.
-    The official bots on the leaderboard use AskNews in Q2.
-    Main template bot changes since Q1
-    - Support for new units parameter was added
-    - You now set your llms when you initialize the bot (making it easier to switch between and benchmark different models)
 
-    The main entry point of this bot is `forecast_on_tournament` in the parent class.
-    See the script at the bottom of the file for more details on how to run the bot.
-    Ignoring the finer details, the general flow is:
-    - Load questions from Metaculus
-    - For each question
-        - Execute run_research a number of times equal to research_reports_per_question
-        - Execute respective run_forecast function `predictions_per_research_report * research_reports_per_question` times
-        - Aggregate the predictions
-        - Submit prediction (if publish_reports_to_metaculus is True)
-    - Return a list of ForecastReport objects
-
-    Only the research and forecast functions need to be implemented in ForecastBot subclasses.
-
-    If you end up having trouble with rate limits and want to try a more sophisticated rate limiter try:
-    ```
-    from forecasting_tools.ai_models.resource_managers.refreshing_bucket_rate_limiter import RefreshingBucketRateLimiter
-    rate_limiter = RefreshingBucketRateLimiter(
-        capacity=2,
-        refresh_rate=1,
-    ) # Allows 1 request per second on average with a burst of 2 requests initially. Set this as a class variable
-    await self.rate_limiter.wait_till_able_to_acquire_resources(1) # 1 because it's consuming 1 request (use more if you are adding a token limit)
-    ```
-    Additionally OpenRouter has large rate limits immediately on account creation
-      """
-
-    _max_concurrent_questions = 1  # Set this to whatever works for your search-provider/ai-model rate limits
+    _max_concurrent_questions = 1
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
 
     @classmethod
@@ -387,15 +355,62 @@ class SelfCritiqueForecaster(ForecastBot):
 
             return comment
 
+    @overload
+    def _parse_and_normalize_prediction(self, question: BinaryQuestion, research: str) -> float:
+        ...
+
+    @overload
+    def _parse_and_normalize_prediction(self, question: MultipleChoiceQuestion, research: str) -> PredictedOptionList:
+        ...
+
+    @overload
+    def _parse_and_normalize_prediction(self, question: NumericQuestion, research: str) -> NumericDistribution:
+        ...
+
+    def _parse_and_normalize_prediction(self, question: MetaculusQuestion, research: str):
+        """
+        Unified method for parsing and normalizing predictions from raw LLM output.
+        
+        This method uses a strategy pattern based on question type to call the appropriate
+        PredictionExtractor function and apply any necessary normalization.
+        
+        Args:
+            question: The MetaculusQuestion object containing question metadata
+            research: The raw LLM output text containing the prediction
+            
+        Returns:
+            The parsed and normalized prediction value (type varies by question type)
+        """
+        if isinstance(question, BinaryQuestion):
+            prediction = PredictionExtractor.extract_last_percentage_value(
+                research, max_prediction=1, min_prediction=0
+            )
+            logger.info(f"Extracted final binary prediction for URL {question.page_url}: {prediction}")
+            return prediction
+            
+        elif isinstance(question, MultipleChoiceQuestion):
+            prediction = PredictionExtractor.extract_option_list_with_percentage_afterwards(
+                research, question.options
+            )
+            logger.info(f"Extracted final multiple choice prediction for URL {question.page_url}: {prediction}")
+            return prediction
+            
+        elif isinstance(question, NumericQuestion):
+            dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
+                research, question
+            )
+            # Apply normalization: sort percentiles to ensure proper ordering
+            dist.declared_percentiles.sort(key=lambda p: p.percentile)
+            logger.info(f"Extracted and sorted final numeric prediction for URL {question.page_url}: {dist.declared_percentiles}")
+            return dist
+            
+        else:
+            raise TypeError(f"Unsupported question type for prediction parsing: {type(question)}")
+
     async def _run_forecast_on_binary(
         self, question: BinaryQuestion, research: str
     ) -> ReasonedPrediction[float]:
-        prediction: float = PredictionExtractor.extract_last_percentage_value(
-            research, max_prediction=1, min_prediction=0
-        )
-        logger.info(
-            f"Extracted final prediction for URL {question.page_url}: {prediction}"
-        )
+        prediction = self._parse_and_normalize_prediction(question, research)
         return ReasonedPrediction(
             prediction_value=prediction, reasoning=research
         )
@@ -403,21 +418,14 @@ class SelfCritiqueForecaster(ForecastBot):
     async def _run_forecast_on_multiple_choice(
         self, question: MultipleChoiceQuestion, research: str
     ) -> ReasonedPrediction[PredictedOptionList]:
-        prediction = PredictionExtractor.extract_option_list_with_percentage_afterwards(
-            research, question.options
-        )
-        logger.info(f"Extracted final prediction for URL {question.page_url}: {prediction}")
+        prediction = self._parse_and_normalize_prediction(question, research)
         return ReasonedPrediction(prediction_value=prediction, reasoning=research)
 
     async def _run_forecast_on_numeric(
         self, question: NumericQuestion, research: str
     ) -> ReasonedPrediction[NumericDistribution]:
-        dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
-            research, question
-        )
-        dist.declared_percentiles.sort(key=lambda p: p.percentile)
-        logger.info(f"Extracted and sorted final prediction for URL {question.page_url}: {dist.declared_percentiles}")
-        return ReasonedPrediction(prediction_value=dist, reasoning=research)
+        prediction = self._parse_and_normalize_prediction(question, research)
+        return ReasonedPrediction(prediction_value=prediction, reasoning=research)
 
     def _create_upper_and_lower_bound_messages(
         self, question: NumericQuestion
