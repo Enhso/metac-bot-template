@@ -30,7 +30,6 @@ from forecasting_prompts import (
     build_initial_prediction_prompt,
     build_adversarial_critique_prompt,
     build_extract_questions_from_critique_prompt,
-    build_refined_prediction_prompt,
     PERSONAS as ENSEMBLE_PERSONAS,
 )
 
@@ -126,188 +125,7 @@ class SelfCritiqueForecaster(ForecastBot):
                 f"{len(exceptions)} errors occurred while forecasting: {exceptions}"
             )
 
-    async def _perform_initial_news_search(self, question_text: str, n_articles: int = 10) -> str:
-        """
-        Performs an initial news search using the AskNews SDK.
-        
-        Args:
-            question_text: The text to extract keywords from for the search
-            n_articles: Number of articles to retrieve (default: 10)
-            
-        Returns:
-            str: The search results as a string, or an error message if the search failed
-        """
-        if not (os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET")):
-            return "AskNews credentials not configured. Skipping initial research."
-            
-        sdk = AsyncAskNewsSDK(
-            client_id=os.getenv("ASKNEWS_CLIENT_ID"),
-            client_secret=os.getenv("ASKNEWS_SECRET"),
-        )
-        
-        try:
-            search_query = await self._extract_keywords_for_search(question_text)
-            results = await sdk.news.search_news(
-                query=search_query, 
-                n_articles=n_articles, 
-                strategy="news knowledge"
-            )
-            return results.as_string if results.as_string is not None else "No results found."
-        except Exception as e:
-            logger.error(f"Initial research failed: {e}", exc_info=True)
-            return f"An error occurred during initial research: {e}"
 
-    async def _extract_keywords_for_search(self, text: str) -> str:
-        """
-        Uses a lightweight LLM to extract key entities and concepts for a targeted news search.
-        """
-
-        await asyncio.sleep(1)
-
-        logger.info(f"Attempting to extract keywords from the following text: '{text}'")
-        if not text or not text.strip():
-            logger.warning("Keyword extraction was called with empty text. Skipping LLM call.")
-            return "" # Return an empty string to be handled by the calling function
-
-        prompt = build_keyword_extractor_prompt(text)
-        try:
-            keywords = await self.get_llm("keyword_extractor_llm", "llm").invoke(prompt)
-
-            if not keywords or not keywords.strip():
-                logger.warning(
-                    f"Keyword extraction with model '{self.get_llm('keyword_extractor_llm', 'llm').model}' returned an empty string. Falling back to original text."
-                )
-                return text
-
-            logger.info(f"Extracted keywords: {keywords.strip()}")
-            return keywords.strip()
-
-        except Exception as e:
-            logger.error(f"Failed to extract keywords due to an API error: {e}. Falling back to original text.")
-            return text
-    async def _generate_initial_prediction(
-        self, question: MetaculusQuestion, initial_research: str
-    ) -> str:
-        """
-        Generates an initial prediction based on the broad, initial research.
-        """
-        prompt = build_initial_prediction_prompt(question, initial_research)
-
-        initial_prediction_text = await self.get_llm("initial_pred_llm", "llm").invoke(
-            prompt
-        )
-        logger.info(f"Generated initial prediction for URL {question.page_url}")
-        return initial_prediction_text
-
-    async def _generate_adversarial_critique(
-        self, question: MetaculusQuestion, initial_prediction_text: str
-    ) -> str:
-        """
-        Challenges the initial prediction to find weaknesses.
-        """
-        prompt = build_adversarial_critique_prompt(question, initial_prediction_text)
-
-        critique_text = await self.get_llm("critique_llm", "llm").invoke(prompt)
-        logger.info(f"Generated critique for URL {question.page_url}")
-        return critique_text
-
-    async def _perform_targeted_search(self, critique_text: str) -> str:
-        """
-        Performs separate, targeted searches for each question raised in the critique
-        and combines the results into a structured report.
-        """
-        extraction_prompt = build_extract_questions_from_critique_prompt(critique_text)
-        questions_text = await self.get_llm("summarizer", "llm").invoke(extraction_prompt)
-        questions = [q for q in questions_text.splitlines() if q.strip()]
-
-        if not questions:
-            logger.warning("No new research questions were generated from the critique.")
-            return "No targeted search was performed as no new questions were identified."
-
-        sdk = AsyncAskNewsSDK(
-            client_id=os.getenv("ASKNEWS_CLIENT_ID"),
-            client_secret=os.getenv("ASKNEWS_SECRET"),
-        )
-
-        # This inner function will handle the search for a single question
-        async def search_for_question(question: str) -> str:
-            keywords = await self._extract_keywords_for_search(question)
-            log_query = keywords if keywords != question else f"(fallback) {question}"
-            logger.info(f"Performing targeted search for: {log_query}")
-
-            try:
-                # Perform a focused search with fewer articles
-                results = await sdk.news.search_news(query=keywords, n_articles=3, strategy="news knowledge")
-                search_results_string = results.as_string if results.as_string is not None else "No results found."
-
-                # Format the output clearly, associating results with the original question
-                return f"### Research for question: \"{question}\"\n\n{search_results_string}"
-            except Exception as e:
-                logger.error(f"Targeted search for '{question}' failed with an error: {e}")
-                return f"### Research for question: \"{question}\"\n\nAn error occurred during the targeted search."
-
-        individual_reports = []
-        for question in questions:
-            # 1. Perform a single search request and wait for it to complete.
-            report = await search_for_question(question)
-            individual_reports.append(report)
-
-            # 2. Pause for 10 seconds before starting the next loop iteration.
-            logger.info(f"AskNews rate limit: Pausing for 10 seconds after targeted search for question: \"{question[:50]}...\"")
-            await asyncio.sleep(10)
-
-        # Join the individual, formatted reports into a single string
-        # This provides a clean, structured input for the final synthesis step
-        combined_report = "\n\n---\n\n".join(individual_reports)
-
-        logger.info("Completed all targeted searches.")
-        return combined_report
-
-    async def _generate_refined_prediction(
-        self,
-        question: MetaculusQuestion,
-        initial_research: str,
-        initial_prediction_text: str,
-        critique_text: str,
-        targeted_research: str,
-    ) -> str:
-        if isinstance(question, MultipleChoiceQuestion):
-            final_answer_format_instruction = f"""
-                - For the multiple choice question, list each option with its probability. You MUST use the exact option text provided. All probabilities must be between 0.1% and 99.9% and sum to 1.0.
-                  Example:
-                  "0 or 1": 10%
-                  "2 or 3": 70%
-                  "4 or more": 20%
-                  The options for this question are: {question.options}
-            """
-        elif isinstance(question, NumericQuestion):
-            final_answer_format_instruction = """
-                - For the numeric question, provide the requested percentiles. You MUST ensure the values are in strictly increasing order (10th percentile < 20th < 40th, etc.).
-                  Example:
-                  Percentile 10: 115
-                  Percentile 20: 118
-                  Percentile 40: 122
-                  Percentile 60: 126
-                  Percentile 80: 130
-                  Percentile 90: 135
-            """
-        else: # BinaryQuestion
-            final_answer_format_instruction = """
-                - For the binary question: "Probability: ZZ%". All probabilities must be between 0.1% and 99.9%.
-            """
-
-        prompt = build_refined_prediction_prompt(
-            question=question,
-            initial_research=initial_research,
-            initial_prediction_text=initial_prediction_text,
-            critique_text=critique_text,
-            targeted_research=targeted_research,
-            final_answer_format_instruction=final_answer_format_instruction,
-        )
-
-        refined_prediction_text = await self.get_llm("refined_pred_llm", "llm").invoke(prompt)
-        logger.info(f"Generated refined prediction for URL {question.page_url}")
-        return refined_prediction_text
 
     async def run_research(self, question: MetaculusQuestion) -> str:
         """
@@ -318,7 +136,7 @@ class SelfCritiqueForecaster(ForecastBot):
             strategy = CritiqueAndRefineStrategy(self.get_llm, logger)
 
             # STEP 1: Initial, broad research.
-            initial_research = await self._perform_initial_news_search(question.question_text)
+            initial_research = await strategy.initial_research(question)
 
             # STEP 2: Initial prediction
             initial_prediction_text = await strategy.generate_initial_prediction(question, initial_research)
@@ -543,60 +361,10 @@ class EnsembleForecaster(SelfCritiqueForecaster):
 
     async def _get_initial_research(self, question: MetaculusQuestion) -> str:
         """Helper to get initial research for a question."""
-        return await self._perform_initial_news_search(question.question_text)
+        strategy = CritiqueAndRefineStrategy(self.get_llm, logger)
+        return await strategy.initial_research(question)
 
-    def _get_final_answer_format_instruction(self, question: MetaculusQuestion) -> str:
-        """Helper to get the correct final answer format instruction based on question type."""
-        if isinstance(question, MultipleChoiceQuestion):
-            return f"""
-                - For the multiple choice question, list each option with its probability. You MUST use the exact option text provided. All probabilities must be between 0.1% and 99.9% and sum to 1.0.
-                  Example:
-                  "0 or 1": 10%
-                  "2 or 3": 70%
-                  "4 or more": 20%
-                  The options for this question are: {question.options}
-            """
-        elif isinstance(question, NumericQuestion):
-            return """
-                - For the numeric question, provide the requested percentiles. You MUST ensure the values are in strictly increasing order (10th percentile < 20th < 40th, etc.).
-                  Example:
-                  Percentile 10: 115
-                  Percentile 20: 118
-                  Percentile 40: 122
-                  Percentile 60: 126
-                  Percentile 80: 130
-                  Percentile 90: 135
-            """
-        else:  # BinaryQuestion
-            return """
-                - For the binary question: "Probability: ZZ%". All probabilities must be between 0.1% and 99.9%.
-            """
 
-    async def _generate_refined_prediction_with_persona(
-        self,
-        question: MetaculusQuestion,
-        initial_research: str,
-        initial_prediction_text: str,
-        critique_text: str,
-        targeted_research: str,
-        persona_prompt: str,
-    ) -> str:
-        """
-        Builds the prompt for a refined prediction and injects the persona.
-        """
-        final_answer_format_instruction = self._get_final_answer_format_instruction(question)
-
-        prompt = build_refined_prediction_prompt(
-            question=question,
-            initial_research=initial_research,
-            initial_prediction_text=initial_prediction_text,
-            critique_text=critique_text,
-            targeted_research=targeted_research,
-            final_answer_format_instruction=final_answer_format_instruction,
-            persona_prompt=persona_prompt,
-        )
-
-        return await self.get_llm("refined_pred_llm", "llm").invoke(prompt)
 
     async def _synthesize_ensemble_forecasts(
         self, question: MetaculusQuestion, persona_reports: list[tuple[str, str]]
@@ -604,12 +372,14 @@ class EnsembleForecaster(SelfCritiqueForecaster):
         """
         Takes the reports from all personas and synthesizes them into a final reasoned prediction.
         """
+        strategy = CritiqueAndRefineStrategy(self.get_llm, logger)
+        
         report_texts = []
         for name, report in persona_reports:
             report_texts.append(f"--- REPORT FROM {name.upper()} ---\n{report}\n--- END REPORT ---")
 
         combined_reports = "\n\n".join(report_texts)
-        final_answer_format_instruction = self._get_final_answer_format_instruction(question)
+        final_answer_format_instruction = strategy.get_final_answer_format_instruction(question)
 
         synthesis_prompt = clean_indents(
             f"""

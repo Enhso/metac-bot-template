@@ -212,6 +212,10 @@ class CritiqueAndRefineStrategy:
             )
             return text
 
+    def get_final_answer_format_instruction(self, question: MetaculusQuestion) -> str:
+        """Public method to get the final answer format instruction for a question."""
+        return self._final_answer_format_instruction(question)
+
     def _final_answer_format_instruction(self, question: MetaculusQuestion) -> str:
         if isinstance(question, MultipleChoiceQuestion):
             return f"""
