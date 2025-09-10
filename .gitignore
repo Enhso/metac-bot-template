@@ -2,6 +2,7 @@
 benchmarks/
 forecast_reports/
 sandbox.py
+archive/
 
 
 ### General gitignore ###
