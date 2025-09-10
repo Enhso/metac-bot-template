@@ -18,8 +18,8 @@ from forecasting_tools import (
     run_benchmark_streamlit_page,
 )
 
-from main import EnsembleForecaster
-from config.loader import load_bot_config, default_config_path
+from main import create_ensemble_forecaster
+from config.loader import default_config_path
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +57,7 @@ async def benchmark_forecast_bot(mode: str) -> None:
         raise ValueError(f"Invalid mode: {mode}")
 
     with MonetaryCostManager() as cost_manager:
-        bot_cfg, llms = load_bot_config(default_config_path())
-        bot_one = EnsembleForecaster(llms=llms, **bot_cfg)
+        bot_one = create_ensemble_forecaster(str(default_config_path()))
         forecast_bots: list[ForecastBot] = typeguard.check_type([bot_one], list[ForecastBot])
         benchmarks = await Benchmarker(
             questions_to_use=questions,

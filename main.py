@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import traceback
+from pathlib import Path
 
 from typing import Literal, Sequence, overload
 from forecasting_tools import (
@@ -429,6 +430,51 @@ class EnsembleForecaster(SelfCritiqueForecaster):
             return dist
         raise TypeError(f"Unsupported question type for parsing: {type(question)}")
 
+def create_ensemble_forecaster(config_path: str | Path | None = None) -> EnsembleForecaster:
+    """
+    Create an EnsembleForecaster instance with configuration loaded from YAML.
+    
+    This is the centralized factory function that ensures consistent configuration
+    loading across all entry points. It provides a single source of truth for
+    bot configuration and prevents misconfiguration errors.
+    
+    Args:
+        config_path: Path to the YAML configuration file. If None, uses the default path.
+        
+    Returns:
+        Configured EnsembleForecaster instance ready for use.
+        
+    Raises:
+        FileNotFoundError: If the configuration file doesn't exist.
+        ValueError: If the configuration is invalid.
+    """
+    if config_path is None:
+        config_path = str(default_config_path())
+    
+    logger.info(f"Loading bot configuration from: {config_path}")
+    
+    # Load bot configuration and llms from YAML
+    bot_cfg, llms = load_bot_config(config_path)
+    
+    # Log key configuration values for verification
+    logger.info(f"Configuration loaded successfully:")
+    logger.info(f"  - research_reports_per_question: {bot_cfg.get('research_reports_per_question')}")
+    logger.info(f"  - publish_reports_to_metaculus: {bot_cfg.get('publish_reports_to_metaculus')}")
+    logger.info(f"  - skip_previously_forecasted_questions: {bot_cfg.get('skip_previously_forecasted_questions')}")
+    logger.info(f"  - folder_to_save_reports_to: {bot_cfg.get('folder_to_save_reports_to')}")
+    logger.info(f"  - Number of LLMs configured: {len(llms)}")
+    
+    # Validate that essential configuration is present
+    if 'research_reports_per_question' not in bot_cfg:
+        raise ValueError("Missing required configuration: research_reports_per_question")
+    
+    # Construct the forecaster from externalized configuration
+    forecaster = EnsembleForecaster(llms=llms, **bot_cfg)
+    
+    logger.info("EnsembleForecaster created successfully with loaded configuration")
+    return forecaster
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
@@ -467,11 +513,8 @@ if __name__ == "__main__":
         "minibench",
     ], "Invalid run mode"
 
-    # Load bot configuration and llms from YAML
-    bot_cfg, llms = load_bot_config(args.config)
-
-    # Construct the forecaster from externalized configuration
-    bot_one = EnsembleForecaster(llms=llms, **bot_cfg)
+    # Create forecaster using the centralized configuration factory
+    bot_one = create_ensemble_forecaster(args.config)
 
     if run_mode == "tournament":
         forecast_reports = asyncio.run(
