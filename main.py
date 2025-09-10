@@ -3,7 +3,9 @@ import asyncio
 import logging
 import os
 import traceback
+import time
 from pathlib import Path
+from dataclasses import dataclass
 
 from typing import Literal, Sequence, overload
 from forecasting_tools import (
@@ -35,6 +37,21 @@ from forecasting_prompts import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ResearchDossier:
+    """
+    Contains all research artifacts generated during the shared research phase.
+    This dossier is used as input for persona-based analysis, avoiding the need
+    to repeat expensive research operations for each persona.
+    """
+    question: MetaculusQuestion
+    initial_research: str
+    initial_prediction_text: str
+    critique_text: str
+    targeted_research: str
+
 
 class SelfCritiqueForecaster(ForecastBot):
 
@@ -134,7 +151,7 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         async with self._concurrency_limiter:
             # Use the centralized CritiqueAndRefineStrategy for orchestration
-            strategy = CritiqueAndRefineStrategy(self.get_llm, logger)
+            strategy = CritiqueAndRefineStrategy(lambda name, kind: self.get_llm(name, "llm"), logger)
 
             # STEP 1: Initial, broad research.
             initial_research = await strategy.initial_research(question)
@@ -294,36 +311,103 @@ class EnsembleForecaster(SelfCritiqueForecaster):
         notepad.note_entries["personas"] = list(self.PERSONAS.keys())
         return notepad
 
+    async def _generate_research_dossier(self, question: MetaculusQuestion) -> ResearchDossier:
+        """
+        Generates a complete research dossier for a question containing all research artifacts.
+        This method performs the expensive research operations only once per question.
+        """
+        start_time = time.time()
+        logger.info(f"Starting research dossier generation for URL {question.page_url}")
+        
+        strategy = CritiqueAndRefineStrategy(lambda name, kind: self.get_llm(name, "llm"), logger)
+        
+        # Perform shared research pipeline with timing for each step
+        step_start = time.time()
+        initial_research = await strategy.initial_research(question)
+        logger.info(f"Initial research completed in {time.time() - step_start:.2f}s for URL {question.page_url}")
+        
+        step_start = time.time()
+        initial_prediction_text = await strategy.generate_initial_prediction(question, initial_research)
+        logger.info(f"Initial prediction completed in {time.time() - step_start:.2f}s for URL {question.page_url}")
+        
+        step_start = time.time()
+        critique_text = await strategy.generate_adversarial_critique(question, initial_prediction_text)
+        logger.info(f"Adversarial critique completed in {time.time() - step_start:.2f}s for URL {question.page_url}")
+        
+        step_start = time.time()
+        targeted_research = await strategy.perform_targeted_search(critique_text)
+        logger.info(f"Targeted search completed in {time.time() - step_start:.2f}s for URL {question.page_url}")
+        
+        total_time = time.time() - start_time
+        logger.info(f"Research dossier generation completed in {total_time:.2f}s for URL {question.page_url}")
+        
+        return ResearchDossier(
+            question=question,
+            initial_research=initial_research,
+            initial_prediction_text=initial_prediction_text,
+            critique_text=critique_text,
+            targeted_research=targeted_research
+        )
+
     async def _run_individual_question(self, question: MetaculusQuestion) -> ForecastReport:
         """
         Orchestrates the ensemble forecasting process for a single question.
-        This corrected version performs research once, then analyzes with each persona,
-        and correctly uses the concurrency limiter.
+        This refactored version separates research from persona-based analysis:
+        1. Generate research dossier once (expensive operations)
+        2. Apply each persona to the same research artifacts (cheap operations)
+        3. Synthesize final forecast from all persona reports
         """
         async with self._concurrency_limiter:
+            overall_start_time = time.time()
+            
             # --- RESEARCH PHASE (RUNS ONCE PER QUESTION) ---
-            strategy = CritiqueAndRefineStrategy(self.get_llm, logger)
-            initial_research = await strategy.initial_research(question)
-            initial_prediction_text = await strategy.generate_initial_prediction(question, initial_research)
-            critique_text = await strategy.generate_adversarial_critique(question, initial_prediction_text)
-            targeted_research = await strategy.perform_targeted_search(critique_text)
-
+            logger.info(f"Starting research phase for URL {question.page_url}")
+            research_start_time = time.time()
+            research_dossier = await self._generate_research_dossier(question)
+            research_time = time.time() - research_start_time
+            
             # --- ANALYSIS PHASE (RUNS ONCE PER PERSONA) ---
+            logger.info(f"Starting persona analysis phase for URL {question.page_url}")
+            persona_start_time = time.time()
+            strategy = CritiqueAndRefineStrategy(lambda name, kind: self.get_llm(name, "llm"), logger)
             persona_reports = []
+            
             for persona_name in self.PERSONAS:
                 persona_prompt = self.PERSONAS[persona_name]
+                logger.info(f"Generating {persona_name} analysis for URL {question.page_url}")
+                
+                # Use the pre-generated research dossier for persona analysis
+                persona_step_start = time.time()
                 refined_prediction_text = await strategy.generate_refined_prediction(
-                    question,
-                    initial_research,
-                    initial_prediction_text,
-                    critique_text,
-                    targeted_research,
+                    research_dossier.question,
+                    research_dossier.initial_research,
+                    research_dossier.initial_prediction_text,
+                    research_dossier.critique_text,
+                    research_dossier.targeted_research,
                     persona_prompt=persona_prompt,
                 )
+                persona_step_time = time.time() - persona_step_start
+                logger.info(f"{persona_name} analysis completed in {persona_step_time:.2f}s for URL {question.page_url}")
                 persona_reports.append((persona_name, refined_prediction_text))
 
+            persona_total_time = time.time() - persona_start_time
+            logger.info(f"All persona analyses completed in {persona_total_time:.2f}s for URL {question.page_url}")
+
             # --- SYNTHESIS PHASE (RUNS ONCE) ---
+            logger.info(f"Starting synthesis phase for URL {question.page_url}")
+            synthesis_start_time = time.time()
             reasoned_prediction = await self._synthesize_ensemble_forecasts(question, persona_reports)
+            synthesis_time = time.time() - synthesis_start_time
+            logger.info(f"Synthesis completed in {synthesis_time:.2f}s for URL {question.page_url}")
+
+            # Log efficiency summary
+            total_time = time.time() - overall_start_time
+            logger.info(f"EFFICIENCY SUMMARY for URL {question.page_url}: "
+                       f"Total={total_time:.2f}s (Research={research_time:.2f}s, "
+                       f"Personas={persona_total_time:.2f}s, Synthesis={synthesis_time:.2f}s). "
+                       f"Research was performed ONCE instead of {len(self.PERSONAS)} times, "
+                       f"saving ~{research_time * (len(self.PERSONAS) - 1):.2f}s and "
+                       f"~{((len(self.PERSONAS) - 1) / len(self.PERSONAS)) * 100:.0f}% of research API calls.")
 
             # Format the final explanation to meet the validation requirement
             final_explanation = f"# Final Synthesized Forecast\n\n{reasoned_prediction.reasoning}"
@@ -357,12 +441,13 @@ class EnsembleForecaster(SelfCritiqueForecaster):
             if self.publish_reports_to_metaculus:
                 await final_report.publish_report_to_metaculus()
 
+            logger.info(f"Completed ensemble forecasting for URL {question.page_url}")
             return final_report
 
 
     async def _get_initial_research(self, question: MetaculusQuestion) -> str:
         """Helper to get initial research for a question."""
-        strategy = CritiqueAndRefineStrategy(self.get_llm, logger)
+        strategy = CritiqueAndRefineStrategy(lambda name, kind: self.get_llm(name, "llm"), logger)
         return await strategy.initial_research(question)
 
 
@@ -373,7 +458,7 @@ class EnsembleForecaster(SelfCritiqueForecaster):
         """
         Takes the reports from all personas and synthesizes them into a final reasoned prediction.
         """
-        strategy = CritiqueAndRefineStrategy(self.get_llm, logger)
+        strategy = CritiqueAndRefineStrategy(lambda name, kind: self.get_llm(name, "llm"), logger)
         
         report_texts = []
         for name, report in persona_reports:
