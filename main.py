@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import logging
-import os
 import traceback
 import time
 from pathlib import Path
@@ -26,15 +25,8 @@ from forecasting_tools import (
 )
 from critique_strategy import CritiqueAndRefineStrategy
 
-from asknews_sdk import AsyncAskNewsSDK
 from config.loader import load_bot_config, default_config_path
-from forecasting_prompts import (
-    build_keyword_extractor_prompt,
-    build_initial_prediction_prompt,
-    build_adversarial_critique_prompt,
-    build_extract_questions_from_critique_prompt,
-    PERSONAS as ENSEMBLE_PERSONAS,
-)
+from forecasting_prompts import PERSONAS as ENSEMBLE_PERSONAS
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +183,38 @@ class SelfCritiqueForecaster(ForecastBot):
 
             return comment
 
+    def _extract_prediction_using_centralized_logic(self, question: MetaculusQuestion, text: str):
+        """
+        Centralized prediction extraction logic using forecasting_tools.PredictionExtractor.
+        
+        This method consolidates all prediction parsing logic to eliminate duplication and
+        ensure consistent behavior across the application.
+        
+        Args:
+            question: The MetaculusQuestion object containing question metadata
+            text: The raw LLM output text containing the prediction
+            
+        Returns:
+            The parsed prediction value (type varies by question type)
+        """
+        if isinstance(question, BinaryQuestion):
+            return PredictionExtractor.extract_last_percentage_value(
+                text, max_prediction=1, min_prediction=0
+            )
+        elif isinstance(question, MultipleChoiceQuestion):
+            return PredictionExtractor.extract_option_list_with_percentage_afterwards(
+                text, question.options
+            )
+        elif isinstance(question, NumericQuestion):
+            dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
+                text, question
+            )
+            # Apply normalization: sort percentiles to ensure proper ordering
+            dist.declared_percentiles.sort(key=lambda p: p.percentile)
+            return dist
+        else:
+            raise TypeError(f"Unsupported question type for prediction parsing: {type(question)}")
+
     @overload
     def _parse_and_normalize_prediction(self, question: BinaryQuestion, research: str) -> float:
         ...
@@ -205,10 +229,10 @@ class SelfCritiqueForecaster(ForecastBot):
 
     def _parse_and_normalize_prediction(self, question: MetaculusQuestion, research: str):
         """
-        Unified method for parsing and normalizing predictions from raw LLM output.
+        Parse and normalize predictions from raw LLM output using centralized PredictionExtractor logic.
         
-        This method uses a strategy pattern based on question type to call the appropriate
-        PredictionExtractor function and apply any necessary normalization.
+        This method delegates to forecasting_tools.PredictionExtractor for consistent parsing
+        across the application while preserving logging for debugging.
         
         Args:
             question: The MetaculusQuestion object containing question metadata
@@ -217,31 +241,9 @@ class SelfCritiqueForecaster(ForecastBot):
         Returns:
             The parsed and normalized prediction value (type varies by question type)
         """
-        if isinstance(question, BinaryQuestion):
-            prediction = PredictionExtractor.extract_last_percentage_value(
-                research, max_prediction=1, min_prediction=0
-            )
-            logger.info(f"Extracted final binary prediction for URL {question.page_url}: {prediction}")
-            return prediction
-            
-        elif isinstance(question, MultipleChoiceQuestion):
-            prediction = PredictionExtractor.extract_option_list_with_percentage_afterwards(
-                research, question.options
-            )
-            logger.info(f"Extracted final multiple choice prediction for URL {question.page_url}: {prediction}")
-            return prediction
-            
-        elif isinstance(question, NumericQuestion):
-            dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(
-                research, question
-            )
-            # Apply normalization: sort percentiles to ensure proper ordering
-            dist.declared_percentiles.sort(key=lambda p: p.percentile)
-            logger.info(f"Extracted and sorted final numeric prediction for URL {question.page_url}: {dist.declared_percentiles}")
-            return dist
-            
-        else:
-            raise TypeError(f"Unsupported question type for prediction parsing: {type(question)}")
+        prediction = self._extract_prediction_using_centralized_logic(question, research)
+        logger.info(f"Extracted final {type(question).__name__} prediction for URL {question.page_url}: {prediction}")
+        return prediction
 
     async def _run_forecast_on_binary(
         self, question: BinaryQuestion, research: str
@@ -504,16 +506,13 @@ class EnsembleForecaster(SelfCritiqueForecaster):
         return ReasonedPrediction(prediction_value=prediction, reasoning=final_reasoning)
 
     def _parse_final_prediction(self, question: MetaculusQuestion, reasoning: str):
-        """Parses the final prediction from the synthesized reasoning in a type-safe way."""
-        if isinstance(question, BinaryQuestion):
-            return PredictionExtractor.extract_last_percentage_value(reasoning, max_prediction=1, min_prediction=0)
-        elif isinstance(question, MultipleChoiceQuestion):
-            return PredictionExtractor.extract_option_list_with_percentage_afterwards(reasoning, question.options)
-        elif isinstance(question, NumericQuestion):
-            dist = PredictionExtractor.extract_numeric_distribution_from_list_of_percentile_number_and_probability(reasoning, question)
-            dist.declared_percentiles.sort(key=lambda p: p.percentile)
-            return dist
-        raise TypeError(f"Unsupported question type for parsing: {type(question)}")
+        """
+        Parse final prediction from synthesized reasoning using centralized logic.
+        
+        This method delegates to the centralized prediction extraction logic to ensure
+        consistency across all prediction parsing in the application.
+        """
+        return self._extract_prediction_using_centralized_logic(question, reasoning)
 
 def create_ensemble_forecaster(config_path: str | Path | None = None) -> EnsembleForecaster:
     """

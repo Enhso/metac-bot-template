@@ -9,7 +9,6 @@ from forecasting_tools import (
     MetaculusQuestion,
     MultipleChoiceQuestion,
     NumericQuestion,
-    clean_indents,
 )
 from forecasting_prompts import (
     build_keyword_extractor_prompt,
