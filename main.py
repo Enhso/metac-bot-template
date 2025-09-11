@@ -1,12 +1,14 @@
 import argparse
 import asyncio
 import logging
+import os
 import traceback
 import time
 from pathlib import Path
 from dataclasses import dataclass
 
 from typing import Literal, Sequence, overload
+from asknews_sdk import AsyncAskNewsSDK
 from forecasting_tools import (
     BinaryQuestion,
     ForecastBot,
@@ -49,6 +51,21 @@ class SelfCritiqueForecaster(ForecastBot):
 
     _max_concurrent_questions = 1
     _concurrency_limiter = asyncio.Semaphore(_max_concurrent_questions)
+
+    @staticmethod
+    def _create_asknews_client() -> AsyncAskNewsSDK | None:
+        """
+        Create an AsyncAskNewsSDK client if credentials are available.
+        
+        Returns:
+            AsyncAskNewsSDK instance if credentials are available, None otherwise.
+        """
+        if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
+            return AsyncAskNewsSDK(
+                client_id=os.getenv("ASKNEWS_CLIENT_ID"),
+                client_secret=os.getenv("ASKNEWS_SECRET"),
+            )
+        return None
 
     @classmethod
     def log_report_summary(
@@ -143,7 +160,12 @@ class SelfCritiqueForecaster(ForecastBot):
         """
         async with self._concurrency_limiter:
             # Use the centralized CritiqueAndRefineStrategy for orchestration
-            strategy = CritiqueAndRefineStrategy(lambda name, kind: self.get_llm(name, "llm"), logger)
+            asknews_client = self._create_asknews_client()
+            strategy = CritiqueAndRefineStrategy(
+                lambda name, kind: self.get_llm(name, "llm"), 
+                asknews_client=asknews_client,
+                logger=logger
+            )
 
             # STEP 1: Initial, broad research.
             initial_research = await strategy.initial_research(question)
@@ -321,7 +343,12 @@ class EnsembleForecaster(SelfCritiqueForecaster):
         start_time = time.time()
         logger.info(f"Starting research dossier generation for URL {question.page_url}")
         
-        strategy = CritiqueAndRefineStrategy(lambda name, kind: self.get_llm(name, "llm"), logger)
+        asknews_client = self._create_asknews_client()
+        strategy = CritiqueAndRefineStrategy(
+            lambda name, kind: self.get_llm(name, "llm"), 
+            asknews_client=asknews_client,
+            logger=logger
+        )
         
         # Perform shared research pipeline with timing for each step
         step_start = time.time()
@@ -371,7 +398,12 @@ class EnsembleForecaster(SelfCritiqueForecaster):
             # --- ANALYSIS PHASE (RUNS ONCE PER PERSONA) ---
             logger.info(f"Starting persona analysis phase for URL {question.page_url}")
             persona_start_time = time.time()
-            strategy = CritiqueAndRefineStrategy(lambda name, kind: self.get_llm(name, "llm"), logger)
+            asknews_client = self._create_asknews_client()
+            strategy = CritiqueAndRefineStrategy(
+                lambda name, kind: self.get_llm(name, "llm"), 
+                asknews_client=asknews_client,
+                logger=logger
+            )
             persona_reports = []
             
             for persona_name in self.PERSONAS:
@@ -449,7 +481,12 @@ class EnsembleForecaster(SelfCritiqueForecaster):
 
     async def _get_initial_research(self, question: MetaculusQuestion) -> str:
         """Helper to get initial research for a question."""
-        strategy = CritiqueAndRefineStrategy(lambda name, kind: self.get_llm(name, "llm"), logger)
+        asknews_client = self._create_asknews_client()
+        strategy = CritiqueAndRefineStrategy(
+            lambda name, kind: self.get_llm(name, "llm"), 
+            asknews_client=asknews_client,
+            logger=logger
+        )
         return await strategy.initial_research(question)
 
 
@@ -460,7 +497,12 @@ class EnsembleForecaster(SelfCritiqueForecaster):
         """
         Takes the reports from all personas and synthesizes them into a final reasoned prediction.
         """
-        strategy = CritiqueAndRefineStrategy(lambda name, kind: self.get_llm(name, "llm"), logger)
+        asknews_client = self._create_asknews_client()
+        strategy = CritiqueAndRefineStrategy(
+            lambda name, kind: self.get_llm(name, "llm"), 
+            asknews_client=asknews_client,
+            logger=logger
+        )
         
         report_texts = []
         for name, report in persona_reports:

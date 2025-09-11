@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 from datetime import datetime
 from typing import Callable, Optional
 
@@ -31,33 +30,31 @@ class CritiqueAndRefineStrategy:
     This class is intentionally framework-agnostic and depends only on:
     - a get_llm(name: str, kind: str) -> LLM interface with .invoke(prompt) coroutine
     - asyncio for pacing
-    - AskNews SDK credentials from environment
+    - An AsyncAskNewsSDK client instance (injected dependency)
     - a logger (optional)
     """
 
     def __init__(
         self,
         get_llm: Callable[[str, str], any],
+        asknews_client: Optional[AsyncAskNewsSDK] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._get_llm = get_llm
+        self._asknews_client = asknews_client
         self._logger = logger or logging.getLogger(__name__)
 
     # ----------------------------- Public Orchestration -----------------------------
     async def initial_research(self, question: MetaculusQuestion) -> str:
-        """Performs initial broad research using AskNews (if credentials available)."""
+        """Performs initial broad research using AskNews (if client available)."""
         initial_research = ""
-        if os.getenv("ASKNEWS_CLIENT_ID") and os.getenv("ASKNEWS_SECRET"):
-            sdk = AsyncAskNewsSDK(
-                client_id=os.getenv("ASKNEWS_CLIENT_ID"),
-                client_secret=os.getenv("ASKNEWS_SECRET"),
-            )
+        if self._asknews_client:
             try:
                 search_query = await self.extract_keywords_for_search(question.question_text)
                 self._logger.info(
                     f"Performing comprehensive initial search for '{question.page_url}' with query: '{search_query}'"
                 )
-                results = await sdk.news.search_news(
+                results = await self._asknews_client.news.search_news(
                     query=search_query, n_articles=10, strategy="news knowledge"
                 )
                 initial_research = (
@@ -113,10 +110,13 @@ class CritiqueAndRefineStrategy:
                 "No targeted search was performed as no new questions were identified."
             )
 
-        sdk = AsyncAskNewsSDK(
-            client_id=os.getenv("ASKNEWS_CLIENT_ID"),
-            client_secret=os.getenv("ASKNEWS_SECRET"),
-        )
+        if not self._asknews_client:
+            self._logger.warning(
+                "No AskNews client available for targeted search."
+            )
+            return (
+                "No targeted search was performed as no research client is available."
+            )
 
         async def search_for_question(question: str) -> str:
             keywords = await self.extract_keywords_for_search(question)
@@ -124,7 +124,7 @@ class CritiqueAndRefineStrategy:
             self._logger.info(f"Performing targeted search for: {log_query}")
 
             try:
-                results = await sdk.news.search_news(
+                results = await self._asknews_client.news.search_news(
                     query=keywords, n_articles=3, strategy="news knowledge"
                 )
                 search_results_string = (
