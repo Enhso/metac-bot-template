@@ -154,50 +154,85 @@ class SelfCritiqueForecaster(ForecastBot):
 
 
 
+
+
+    async def _generate_research_dossier(self, question: MetaculusQuestion) -> ResearchDossier:
+        """
+        Generates a complete research dossier for a question containing all research artifacts.
+        This method performs the expensive research operations only once per question.
+        """
+        start_time = time.time()
+        logger.info(f"Starting research dossier generation for URL {question.page_url}")
+        
+        asknews_client = self._create_asknews_client()
+        strategy = CritiqueAndRefineStrategy(
+            lambda name, kind: self.get_llm(name, "llm"), 
+            asknews_client=asknews_client,
+            logger=logger
+        )
+        
+        # Perform shared research pipeline with timing for each step
+        step_start = time.time()
+        initial_research = await strategy.initial_research(question)
+        logger.info(f"Initial research completed in {time.time() - step_start:.2f}s for URL {question.page_url}")
+        
+        step_start = time.time()
+        initial_prediction_text = await strategy.generate_initial_prediction(question, initial_research)
+        logger.info(f"Initial prediction completed in {time.time() - step_start:.2f}s for URL {question.page_url}")
+        
+        step_start = time.time()
+        critique_text = await strategy.generate_adversarial_critique(question, initial_prediction_text)
+        logger.info(f"Adversarial critique completed in {time.time() - step_start:.2f}s for URL {question.page_url}")
+        
+        step_start = time.time()
+        targeted_research = await strategy.perform_targeted_search(critique_text)
+        logger.info(f"Targeted search completed in {time.time() - step_start:.2f}s for URL {question.page_url}")
+        
+        total_time = time.time() - start_time
+        logger.info(f"Research dossier generation completed in {total_time:.2f}s for URL {question.page_url}")
+        
+        return ResearchDossier(
+            question=question,
+            initial_research=initial_research,
+            initial_prediction_text=initial_prediction_text,
+            critique_text=critique_text,
+            targeted_research=targeted_research
+        )
+
     async def run_research(self, question: MetaculusQuestion) -> str:
         """
-        Orchestrates the entire "self-critique" forecasting process.
+        Orchestrates the self-critique forecasting process by generating a research dossier
+        and producing a final refined prediction using a neutral (no-persona) approach.
         """
         async with self._concurrency_limiter:
-            # Use the centralized CritiqueAndRefineStrategy for orchestration
+            # Generate the research dossier with all artifacts
+            research_dossier = await self._generate_research_dossier(question)
+            
+            # Generate final refined prediction using the research dossier (no persona)
             asknews_client = self._create_asknews_client()
             strategy = CritiqueAndRefineStrategy(
                 lambda name, kind: self.get_llm(name, "llm"), 
                 asknews_client=asknews_client,
                 logger=logger
             )
-
-            # STEP 1: Initial, broad research.
-            initial_research = await strategy.initial_research(question)
-
-            # STEP 2: Initial prediction
-            initial_prediction_text = await strategy.generate_initial_prediction(question, initial_research)
-
-            # STEP 3: Generate Adversarial Critique
-            critique_text = await strategy.generate_adversarial_critique(question, initial_prediction_text)
-
-            # STEP 4: Perform Targeted Search
-            targeted_research = await strategy.perform_targeted_search(critique_text)
-
-            # STEP 5: Generate Refined Prediction
+            
             refined_prediction_text = await strategy.generate_refined_prediction(
-                question,
-                initial_research,
-                initial_prediction_text,
-                critique_text,
-                targeted_research,
+                research_dossier.question,
+                research_dossier.initial_research,
+                research_dossier.initial_prediction_text,
+                research_dossier.critique_text,
+                research_dossier.targeted_research,
+                persona_prompt=None,  # No persona for SelfCritiqueForecaster
             )
 
-            logger.info(
-                f"Completed self-critique process for URL {question.page_url}"
-            )
+            logger.info(f"Completed self-critique process for URL {question.page_url}")
 
             comment = f"""
 ## Initial Prediction
-{initial_prediction_text}
+{research_dossier.initial_prediction_text}
 
 ## Adversarial Critique
-{critique_text}
+{research_dossier.critique_text}
 
 ## Final Refined Prediction & Rationale
 {refined_prediction_text}
@@ -335,49 +370,6 @@ class EnsembleForecaster(SelfCritiqueForecaster):
         notepad.note_entries["personas"] = list(self.PERSONAS.keys())
         return notepad
 
-    async def _generate_research_dossier(self, question: MetaculusQuestion) -> ResearchDossier:
-        """
-        Generates a complete research dossier for a question containing all research artifacts.
-        This method performs the expensive research operations only once per question.
-        """
-        start_time = time.time()
-        logger.info(f"Starting research dossier generation for URL {question.page_url}")
-        
-        asknews_client = self._create_asknews_client()
-        strategy = CritiqueAndRefineStrategy(
-            lambda name, kind: self.get_llm(name, "llm"), 
-            asknews_client=asknews_client,
-            logger=logger
-        )
-        
-        # Perform shared research pipeline with timing for each step
-        step_start = time.time()
-        initial_research = await strategy.initial_research(question)
-        logger.info(f"Initial research completed in {time.time() - step_start:.2f}s for URL {question.page_url}")
-        
-        step_start = time.time()
-        initial_prediction_text = await strategy.generate_initial_prediction(question, initial_research)
-        logger.info(f"Initial prediction completed in {time.time() - step_start:.2f}s for URL {question.page_url}")
-        
-        step_start = time.time()
-        critique_text = await strategy.generate_adversarial_critique(question, initial_prediction_text)
-        logger.info(f"Adversarial critique completed in {time.time() - step_start:.2f}s for URL {question.page_url}")
-        
-        step_start = time.time()
-        targeted_research = await strategy.perform_targeted_search(critique_text)
-        logger.info(f"Targeted search completed in {time.time() - step_start:.2f}s for URL {question.page_url}")
-        
-        total_time = time.time() - start_time
-        logger.info(f"Research dossier generation completed in {total_time:.2f}s for URL {question.page_url}")
-        
-        return ResearchDossier(
-            question=question,
-            initial_research=initial_research,
-            initial_prediction_text=initial_prediction_text,
-            critique_text=critique_text,
-            targeted_research=targeted_research
-        )
-
     async def _run_individual_question(self, question: MetaculusQuestion) -> ForecastReport:
         """
         Orchestrates the ensemble forecasting process for a single question.
@@ -477,18 +469,6 @@ class EnsembleForecaster(SelfCritiqueForecaster):
 
             logger.info(f"Completed ensemble forecasting for URL {question.page_url}")
             return final_report
-
-
-    async def _get_initial_research(self, question: MetaculusQuestion) -> str:
-        """Helper to get initial research for a question."""
-        asknews_client = self._create_asknews_client()
-        strategy = CritiqueAndRefineStrategy(
-            lambda name, kind: self.get_llm(name, "llm"), 
-            asknews_client=asknews_client,
-            logger=logger
-        )
-        return await strategy.initial_research(question)
-
 
 
     async def _synthesize_ensemble_forecasts(
