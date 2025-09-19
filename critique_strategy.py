@@ -227,7 +227,7 @@ class CritiqueAndRefineStrategy:
             """
         elif isinstance(question, NumericQuestion):
             return """
-                - For the numeric question, provide the requested percentiles. You MUST ensure the values are in strictly increasing order (10th percentile < 20th < 40th, etc.).
+                - For the numeric question, provide the requested percentiles. You MUST ensure the values are in strictly increasing order (10th percentile < 20th < 40th, etc.). Values must be increasing by no more than a factor of 0.59 at every step
                   Example:
                   Percentile 10: 115
                   Percentile 20: 118

@@ -6,8 +6,7 @@ import asyncio
 import logging
 import os
 import time
-import traceback
-from typing import Literal, Sequence, overload
+from typing import Sequence, overload
 
 from asknews_sdk import AsyncAskNewsSDK
 from forecasting_tools import (
@@ -22,12 +21,11 @@ from forecasting_tools import (
     PredictedOptionList,
     PredictionExtractor,
     ReasonedPrediction,
-    clean_indents,
-    Notepad
 )
 
 from critique_strategy import CritiqueAndRefineStrategy
 from data_models import ResearchDossier
+from report_logger import ReportLogger
 
 logger = logging.getLogger(__name__)
 
@@ -59,83 +57,19 @@ class SelfCritiqueForecaster(ForecastBot):
         raise_errors: bool = True,
     ) -> None:
         """
-        A specialized logger for the EnsembleForecaster that understands the structure
-        of its synthesized reports.
+        Log forecast reports using the standardized ReportLogger utility.
+        
+        This method delegates to ReportLogger to provide consistent logging
+        across different ForecastBot implementations while handling the specific
+        report structure used by this bot (raw explanation rather than structured sections).
         """
-        valid_reports = [
-            report for report in forecast_reports if isinstance(report, ForecastReport)
-        ]
-
-        full_summary = "\n"
-        full_summary += "-" * 100 + "\n"
-
-        for report in valid_reports:
-            # This is the key change: we don't try to parse sections like .summary
-            # We just display the whole explanation.
-            question_summary = clean_indents(
-                f"""
-                URL: {report.question.page_url}
-                Errors: {report.errors}
-                <<<<<<<<<<<<<<<<<<<< Synthesized Ensemble Report >>>>>>>>>>>>>>>>>>>>>
-                {report.explanation[:10000]}
-                -------------------------------------------------------------------------------------------
-            """
-            )
-            full_summary += question_summary + "\n"
-
-        full_summary += f"Bot: {cls.__name__}\n"
-        for report in forecast_reports:
-            if isinstance(report, ForecastReport):
-                short_summary = f"✅ URL: {report.question.page_url} | Minor Errors: {len(report.errors)}"
-            else:
-                exception_message = (
-                    str(report)
-                    if len(str(report)) < 1000
-                    else f"{str(report)[:500]}...{str(report)[-500:]}"
-                )
-                short_summary = f"❌ Exception: {report.__class__.__name__} | Message: {exception_message}"
-            full_summary += short_summary + "\n"
-
-        total_cost = sum(
-            report.price_estimate if report.price_estimate else 0
-            for report in valid_reports
+        ReportLogger.log_forecast_summary(
+            forecast_reports=forecast_reports,
+            bot_class_name=cls.__name__,
+            raise_errors=raise_errors,
+            use_structured_sections=False,  # Use raw explanation for self-critique reports
+            max_explanation_length=10000,
         )
-        average_minutes = (
-            (
-                sum(
-                    report.minutes_taken if report.minutes_taken else 0
-                    for report in valid_reports
-                )
-                / len(valid_reports)
-            )
-            if valid_reports
-            else 0
-        )
-        average_cost = total_cost / len(valid_reports) if valid_reports else 0
-        full_summary += "\nStats for passing reports:\n"
-        full_summary += f"Total cost estimated: ${total_cost:.5f}\n"
-        full_summary += f"Average cost per question: ${average_cost:.5f}\n"
-        full_summary += (
-            f"Average time spent per question: {average_minutes:.4f} minutes\n"
-        )
-        full_summary += "-" * 100 + "\n\n\n"
-        logger.info(full_summary)
-
-        exceptions = [
-            report for report in forecast_reports if isinstance(report, BaseException)
-        ]
-
-        if exceptions and raise_errors:
-            for exc in exceptions:
-                logger.error(
-                    "Exception occurred during forecasting:\n%s",
-                    "".join(
-                        traceback.format_exception(type(exc), exc, exc.__traceback__)
-                    ),
-                )
-            raise RuntimeError(
-                f"{len(exceptions)} errors occurred while forecasting: {exceptions}"
-            )
 
     async def _generate_research_dossier(self, question: MetaculusQuestion) -> ResearchDossier:
         """
