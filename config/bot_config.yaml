@@ -13,7 +13,7 @@ llms:
   default:
     type: general
     model: "openrouter/openai/gpt-5"
-    temperature: 0.3
+    temperature: 1.0
     timeout: 80
     allowed_tries: 2
     max_tokens: 1024
@@ -21,7 +21,7 @@ llms:
   initial_pred_llm:
     type: general
     model: "openrouter/openai/gpt-5"
-    temperature: 0.3
+    temperature: 1.0
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
@@ -75,3 +75,116 @@ llms:
     max_tokens: 2048
 
   researcher: "asknews/deep-research/high-depth"
+
+  # Per-persona LLM assignments for maximum cognitive diversity
+  persona_skeptic_llm:
+    type: general
+    model: "openrouter/anthropic/claude-opus-4.1"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+
+  persona_proponent_llm:
+    type: general
+    model: "openrouter/openai/gpt-5"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+
+  persona_quant_llm:
+    type: general
+    model: "openrouter/anthropic/claude-opus-4.1"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+
+
+  persona_contrarian_llm:
+    type: general
+    model: "openrouter/openai/gpt-5"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+
+  persona_systems_thinker_llm:
+    type: general
+    model: "openrouter/anthropic/claude-opus-4.1"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+
+  persona_red_team_llm:
+    type: general
+    model: "openrouter/openai/gpt-5"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+
+  persona_historian_llm:
+    type: general
+    model: "openrouter/anthropic/claude-opus-4.1"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+
+  persona_technologist_llm:
+    type: general
+    model: "openrouter/openai/gpt-5"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+
+  persona_behavioral_economist_llm:
+    type: general
+    model: "openrouter/anthropic/claude-opus-4.1"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+
+  persona_geopolitical_strategist_llm:
+    type: general
+    model: "openrouter/openai/gpt-5"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+

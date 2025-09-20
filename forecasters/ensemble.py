@@ -11,6 +11,7 @@ from asknews_sdk import AsyncAskNewsSDK
 from forecasting_tools import (
     BinaryQuestion,
     ForecastReport,
+    GeneralLlm,
     MetaculusQuestion,
     MultipleChoiceQuestion,
     NumericDistribution,
@@ -34,8 +35,48 @@ class EnsembleForecaster(SelfCritiqueForecaster):
     This bot implements an ensemble strategy by running the forecasting process
     multiple times, each guided by a different analytical persona. This approach
     aims to produce more robust forecasts by synthesizing diverse perspectives.
+    
+    Enhanced version supports per-persona LLM assignment for maximum cognitive diversity.
     """
     PERSONAS = ENSEMBLE_PERSONAS
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Create persona-to-LLM mapping for cognitive diversity
+        self._persona_llm_mapping = self._create_persona_llm_mapping()
+        logger.info(f"Initialized EnsembleForecaster with {len(self.PERSONAS)} personas and diverse LLM assignments")
+
+    def _create_persona_llm_mapping(self) -> dict[str, str]:
+        """
+        Create a mapping from persona names to their assigned LLM keys.
+        Falls back to refined_pred_llm if persona-specific LLM is not configured.
+        """
+        mapping = {}
+        for persona_name in self.PERSONAS.keys():
+            # Convert persona name to LLM key format
+            llm_key = f"persona_{persona_name.lower().replace(' ', '_').replace('the_', '')}_llm"
+            
+            # Check if persona-specific LLM exists, fallback to default
+            if self._llms.get(llm_key) is not None:
+                mapping[persona_name] = llm_key
+                logger.info(f"Persona '{persona_name}' assigned to LLM '{llm_key}'")
+            else:
+                mapping[persona_name] = "refined_pred_llm"
+                logger.warning(f"Persona '{persona_name}' falling back to 'refined_pred_llm' (LLM key '{llm_key}' not found)")
+        
+        return mapping
+
+    def _get_persona_llm(self, persona_name: str) -> str:
+        """
+        Get the LLM key assigned to a specific persona.
+        
+        Args:
+            persona_name: The name of the persona
+            
+        Returns:
+            The LLM key to use for this persona
+        """
+        return self._persona_llm_mapping.get(persona_name, "refined_pred_llm")
 
     async def _initialize_notepad(self, question: MetaculusQuestion) -> Notepad:
         notepad = await super()._initialize_notepad(question)
@@ -72,11 +113,19 @@ class EnsembleForecaster(SelfCritiqueForecaster):
             
             for persona_name in self.PERSONAS:
                 persona_prompt = self.PERSONAS[persona_name]
-                logger.info(f"Generating {persona_name} analysis for URL {question.page_url}")
+                persona_llm_key = self._get_persona_llm(persona_name)
+                logger.info(f"Generating {persona_name} analysis for URL {question.page_url} using LLM '{persona_llm_key}'")
+                
+                # Create a strategy instance with persona-specific LLM
+                persona_strategy = CritiqueAndRefineStrategy(
+                    lambda name, kind: self.get_llm(persona_llm_key, "llm") if name == "refined_pred_llm" else self.get_llm(name, "llm"), 
+                    asknews_client=asknews_client,
+                    logger=logger
+                )
                 
                 # Use the pre-generated research dossier for persona analysis
                 persona_step_start = time.time()
-                refined_prediction_text = await strategy.generate_refined_prediction(
+                refined_prediction_text = await persona_strategy.generate_refined_prediction(
                     research_dossier.question,
                     research_dossier.initial_research,
                     research_dossier.initial_prediction_text,
@@ -85,7 +134,7 @@ class EnsembleForecaster(SelfCritiqueForecaster):
                     persona_prompt=persona_prompt,
                 )
                 persona_step_time = time.time() - persona_step_start
-                logger.info(f"{persona_name} analysis completed in {persona_step_time:.2f}s for URL {question.page_url}")
+                logger.info(f"{persona_name} analysis (LLM: {persona_llm_key}) completed in {persona_step_time:.2f}s for URL {question.page_url}")
                 persona_reports.append((persona_name, refined_prediction_text))
 
             persona_total_time = time.time() - persona_start_time
@@ -164,7 +213,7 @@ class EnsembleForecaster(SelfCritiqueForecaster):
 
         synthesis_prompt = clean_indents(
             f"""
-            You are a lead superforecaster responsible for producing a final, definitive forecast. You have received analyses from three of your expert analysts, each with a different cognitive style: a Skeptic, a Proponent, and a Quant.
+            You are a lead superforecaster responsible for producing a final, definitive forecast. You have received analyses from multiple expert analysts, each with a different cognitive style and approach to forecasting.
 
             Your task is to synthesize their reports, weigh their arguments, resolve contradictions, and produce a single, coherent final rationale and prediction.
 
@@ -175,18 +224,18 @@ class EnsembleForecaster(SelfCritiqueForecaster):
             {combined_reports}
 
             ## Your Task
-            1.  **Synthesize Arguments:** Briefly summarize the key arguments from each analyst. Identify points of agreement and disagreement.
-            2.  **Weigh the Evidence:** Critically evaluate the strength of each argument. Which analyst's case is more compelling and why? How do you reconcile their different conclusions?
-            3.  **Final Rationale:** Provide your final, synthesized rationale. It should reflect your judgment after considering all three perspectives.
+            1.  **Synthesize Arguments:** Briefly summarize the key arguments from each analyst. Identify points of agreement and disagreement across the different perspectives.
+            2.  **Weigh the Evidence:** Critically evaluate the strength of each argument. Which analysts' cases are more compelling and why? How do you reconcile their different conclusions? Consider how cognitive diversity might affect the reliability of different viewpoints.
+            3.  **Final Rationale:** Provide your final, synthesized rationale. It should reflect your judgment after considering all perspectives and leveraging the wisdom of crowds effect from diverse analytical approaches.
             4.  **Final Prediction:** State your final, calibrated prediction in the required format.
 
             **Required Output Format:**
             **Step 1: Synthesis of Analyst Views**
-            - [Your summary and comparison of the analyst reports]
+            - [Your summary and comparison of the analyst reports, noting areas of consensus and disagreement]
             **Step 2: Weighing the Evidence**
-            - [Your evaluation of the competing arguments]
+            - [Your evaluation of the competing arguments and how cognitive diversity influences your analysis]
             **Step 3: Final Rationale**
-            - [Your comprehensive final rationale]
+            - [Your comprehensive final rationale synthesizing all perspectives]
             **Step 4: Final Prediction**
             - [Your final prediction in the required format:
               {final_answer_format_instruction}]
@@ -206,3 +255,20 @@ class EnsembleForecaster(SelfCritiqueForecaster):
         consistency across all prediction parsing in the application.
         """
         return self._extract_prediction_using_centralized_logic(question, reasoning)
+
+    @classmethod
+    def _llm_config_defaults(cls) -> dict[str, str | GeneralLlm | None]:
+        """
+        Returns a dictionary of default llms for the ensemble bot, including persona-specific LLMs.
+        """
+        defaults = super()._llm_config_defaults()
+        assert defaults.get("default") is not None
+        
+        # Add persona-specific LLM defaults (fallback to refined_pred_llm)
+        persona_defaults = {}
+        for persona_name in cls.PERSONAS.keys():
+            llm_key = f"persona_{persona_name.lower().replace(' ', '_').replace('the_', '')}_llm"
+            persona_defaults[llm_key] = defaults["refined_pred_llm"]
+        
+        defaults.update(persona_defaults)
+        return defaults
