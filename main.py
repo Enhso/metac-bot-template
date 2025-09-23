@@ -7,6 +7,7 @@ from typing import Literal
 from forecasting_tools import MetaculusApi
 from config.loader import load_bot_config, default_config_path
 from forecasters import EnsembleForecaster
+from forecasters.bias_aware_ensemble import BiasAwareEnsembleForecaster
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,50 @@ def create_ensemble_forecaster(config_path: str | Path | None = None) -> Ensembl
     return forecaster
 
 
+def create_bias_aware_ensemble_forecaster(config_path: str | Path | None = None) -> BiasAwareEnsembleForecaster:
+    """
+    Create a BiasAwareEnsembleForecaster instance with cognitive bias self-correction.
+    
+    This enhanced forecaster includes systematic cognitive bias detection and correction
+    to improve forecast accuracy and logical soundness.
+    
+    Args:
+        config_path: Path to the YAML configuration file. If None, uses the default path.
+        
+    Returns:
+        Configured BiasAwareEnsembleForecaster instance ready for use.
+        
+    Raises:
+        FileNotFoundError: If the configuration file doesn't exist.
+        ValueError: If the configuration is invalid.
+    """
+    if config_path is None:
+        config_path = str(default_config_path())
+    
+    logger.info(f"Loading bias-aware bot configuration from: {config_path}")
+    
+    # Load bot configuration and llms from YAML
+    bot_cfg, llms = load_bot_config(config_path)
+    
+    # Log key configuration values for verification
+    logger.info(f"Bias-aware configuration loaded successfully:")
+    logger.info(f"  - research_reports_per_question: {bot_cfg.get('research_reports_per_question')}")
+    logger.info(f"  - publish_reports_to_metaculus: {bot_cfg.get('publish_reports_to_metaculus')}")
+    logger.info(f"  - skip_previously_forecasted_questions: {bot_cfg.get('skip_previously_forecasted_questions')}")
+    logger.info(f"  - folder_to_save_reports_to: {bot_cfg.get('folder_to_save_reports_to')}")
+    logger.info(f"  - Number of LLMs configured: {len(llms)}")
+    
+    # Validate that essential configuration is present
+    if 'research_reports_per_question' not in bot_cfg:
+        raise ValueError("Missing required configuration: research_reports_per_question")
+    
+    # Construct the bias-aware forecaster from externalized configuration
+    forecaster = BiasAwareEnsembleForecaster(llms=llms, **bot_cfg)
+    
+    logger.info("BiasAwareEnsembleForecaster created successfully with loaded configuration")
+    return forecaster
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
@@ -68,7 +113,7 @@ if __name__ == "__main__":
     litellm_logger.propagate = False
 
     parser = argparse.ArgumentParser(
-        description="Run the EnsembleForecaster forecasting system"
+        description="Run the EnsembleForecaster forecasting system with optional cognitive bias self-correction"
     )
     parser.add_argument(
         "--mode",
@@ -83,6 +128,11 @@ if __name__ == "__main__":
         default=str(default_config_path()),
         help="Path to YAML config file (default: config/bot_config.yaml)",
     )
+    parser.add_argument(
+        "--bias-aware",
+        action="store_true",
+        help="Use the bias-aware ensemble forecaster with cognitive bias self-correction (default: False)",
+    )
     args = parser.parse_args()
     run_mode: Literal["tournament", "quarterly_cup", "test_questions", "minibench"] = (
         args.mode
@@ -95,7 +145,12 @@ if __name__ == "__main__":
     ], "Invalid run mode"
 
     # Create forecaster using the centralized configuration factory
-    bot_one = create_ensemble_forecaster(args.config)
+    if args.bias_aware:
+        logger.info("Creating bias-aware ensemble forecaster with cognitive bias self-correction")
+        bot_one = create_bias_aware_ensemble_forecaster(args.config)
+    else:
+        logger.info("Creating standard ensemble forecaster")
+        bot_one = create_ensemble_forecaster(args.config)
 
     if run_mode == "tournament":
         forecast_reports = asyncio.run(

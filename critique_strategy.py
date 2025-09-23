@@ -16,6 +16,7 @@ from forecasting_prompts import (
     build_extract_questions_from_critique_prompt,
     build_refined_prediction_prompt,
 )
+from cognitive_bias_checker import CognitiveBiasChecker, build_bias_aware_refinement_prompt
 
 
 class CritiqueAndRefineStrategy:
@@ -43,6 +44,7 @@ class CritiqueAndRefineStrategy:
         self._get_llm = get_llm
         self._asknews_client = asknews_client
         self._logger = logger or logging.getLogger(__name__)
+        self._bias_checker = CognitiveBiasChecker(get_llm, logger)
 
     # ----------------------------- Public Orchestration -----------------------------
     async def initial_research(self, question: MetaculusQuestion) -> str:
@@ -180,6 +182,67 @@ class CritiqueAndRefineStrategy:
         )
         self._logger.info(
             f"Generated refined prediction for URL {question.page_url}"
+        )
+        return refined_prediction_text
+
+    async def perform_cognitive_bias_analysis(
+        self,
+        question: MetaculusQuestion,
+        rationale_text: str,
+        reasoning_context: Optional[str] = None
+    ) -> str:
+        """
+        Perform cognitive bias analysis on a forecasting rationale.
+        
+        This method uses the CognitiveBiasChecker to identify potential biases
+        and suggest specific corrections for improved forecast accuracy.
+        
+        Args:
+            question: The forecasting question being analyzed
+            rationale_text: The reasoning/rationale to analyze for biases
+            reasoning_context: Optional additional context about the reasoning process
+            
+        Returns:
+            A detailed bias analysis with specific correction suggestions
+        """
+        return await self._bias_checker.analyze_for_cognitive_biases(
+            question, rationale_text, reasoning_context
+        )
+
+    async def generate_bias_aware_refined_prediction(
+        self,
+        question: MetaculusQuestion,
+        initial_research: str,
+        initial_prediction_text: str,
+        critique_text: str,
+        targeted_research: str,
+        bias_analysis: str,
+        persona_prompt: Optional[str] = None,
+    ) -> str:
+        """
+        Generate a refined prediction that explicitly accounts for cognitive biases.
+        
+        This enhanced version of the refinement process integrates cognitive bias
+        analysis to produce more calibrated and bias-resistant forecasts.
+        """
+        final_answer_format_instruction = self._final_answer_format_instruction(question)
+
+        prompt = build_bias_aware_refinement_prompt(
+            question=question,
+            initial_research=initial_research,
+            initial_prediction_text=initial_prediction_text,
+            critique_text=critique_text,
+            targeted_research=targeted_research,
+            bias_analysis=bias_analysis,
+            final_answer_format_instruction=final_answer_format_instruction,
+            persona_prompt=persona_prompt,
+        )
+
+        refined_prediction_text = await self._get_llm("refined_pred_llm", "llm").invoke(
+            prompt
+        )
+        self._logger.info(
+            f"Generated bias-aware refined prediction for URL {question.page_url}"
         )
         return refined_prediction_text
 
