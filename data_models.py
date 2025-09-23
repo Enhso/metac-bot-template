@@ -3,8 +3,12 @@ Data models for the forecasting system.
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from forecasting_tools import MetaculusQuestion
+
+# Use TYPE_CHECKING to avoid circular imports
+if TYPE_CHECKING:
+    from contradictory_information_analyzer import ContradictionAnalysisResult
 
 
 @dataclass
@@ -41,9 +45,10 @@ class BiasAnalysisResult:
 @dataclass
 class EnhancedResearchDossier(ResearchDossier):
     """
-    Extended research dossier that includes cognitive bias analysis.
+    Extended research dossier that includes cognitive bias analysis and contradiction analysis.
     
-    This enhanced version supports the full bias-aware forecasting pipeline
-    by including systematic bias detection and correction recommendations.
+    This enhanced version supports the full bias-aware and contradiction-aware forecasting pipeline
+    by including systematic bias detection, correction recommendations, and contradiction resolution.
     """
     bias_analysis: Optional[BiasAnalysisResult] = None
+    contradiction_analysis: Optional["ContradictionAnalysisResult"] = None

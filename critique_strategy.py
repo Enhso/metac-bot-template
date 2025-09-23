@@ -17,6 +17,7 @@ from forecasting_prompts import (
     build_refined_prediction_prompt,
 )
 from cognitive_bias_checker import CognitiveBiasChecker, build_bias_aware_refinement_prompt
+from contradictory_information_analyzer import ContradictoryInformationAnalyzer
 
 
 class CritiqueAndRefineStrategy:
@@ -45,6 +46,7 @@ class CritiqueAndRefineStrategy:
         self._asknews_client = asknews_client
         self._logger = logger or logging.getLogger(__name__)
         self._bias_checker = CognitiveBiasChecker(get_llm, logger)
+        self._contradiction_analyzer = ContradictoryInformationAnalyzer(get_llm, logger)
 
     # ----------------------------- Public Orchestration -----------------------------
     async def initial_research(self, question: MetaculusQuestion) -> str:
@@ -184,6 +186,57 @@ class CritiqueAndRefineStrategy:
             f"Generated refined prediction for URL {question.page_url}"
         )
         return refined_prediction_text
+
+    async def perform_contradictory_information_analysis(
+        self,
+        question: MetaculusQuestion,
+        research_materials: dict[str, str],
+        context: Optional[str] = None
+    ) -> str:
+        """
+        Perform contradictory information analysis on research materials.
+        
+        This method uses the ContradictoryInformationAnalyzer to identify potential
+        contradictions and suggest resolutions or flag them as key uncertainties.
+        
+        Args:
+            question: The forecasting question being analyzed
+            research_materials: Dict containing different research sources
+            context: Optional additional context about the research process
+            
+        Returns:
+            A detailed contradiction analysis with resolution attempts
+        """
+        result = await self._contradiction_analyzer.analyze_contradictory_information(
+            question, research_materials, context
+        )
+        
+        # Format the result as a text summary for integration into the forecasting process
+        summary = f"""## Contradictory Information Analysis
+
+**Overall Coherence Assessment:** {result.overall_coherence_assessment}
+
+**Detected Contradictions:** {len(result.detected_contradictions)}
+"""
+        
+        if result.detected_contradictions:
+            summary += "\n**Key Contradictions:**\n"
+            for i, contradiction in enumerate(result.detected_contradictions[:3], 1):  # Limit to top 3
+                summary += f"{i}. {contradiction.get('description', 'No description')} (Severity: {contradiction.get('severity', 'Unknown')})\n"
+        
+        if result.irresolvable_conflicts:
+            summary += f"\n**Irresolvable Conflicts:** {len(result.irresolvable_conflicts)}\n"
+            for conflict in result.irresolvable_conflicts[:2]:  # Limit to top 2
+                summary += f"- {conflict.get('description', 'No description')}\n"
+        
+        if result.key_uncertainties:
+            summary += f"\n**Key Uncertainties Identified:**\n"
+            for uncertainty in result.key_uncertainties[:3]:  # Limit to top 3
+                summary += f"- {uncertainty}\n"
+        
+        summary += f"\n**Confidence Impact:** {result.confidence_impact}"
+        
+        return summary
 
     async def perform_cognitive_bias_analysis(
         self,
