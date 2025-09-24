@@ -49,7 +49,7 @@ class VolatilityAwareEnsembleForecaster(ContradictionAwareEnsembleForecaster):
         Generate comprehensive research dossier with bias, contradiction, AND volatility analysis.
         """
         # Start with the contradiction-aware dossier
-        dossier = await super()._generate_enhanced_research_dossier(question)
+        dossier = await super()._generate_research_dossier(question)
         
         # Add volatility analysis
         logger.info(f"Starting volatility analysis for URL {question.page_url}")
