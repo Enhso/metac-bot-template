@@ -43,12 +43,35 @@ class BiasAnalysisResult:
     
     
 @dataclass
+class VolatilityAnalysisResult:
+    """
+    Contains the results of volatility analysis for a forecasting question.
+    
+    This structure captures information volatility metrics and recommended 
+    confidence adjustments based on news sentiment and volume analysis.
+    """
+    question: MetaculusQuestion
+    analyzed_keywords: list[str]
+    news_volume: int  # Number of relevant news articles found
+    sentiment_volatility: float  # 0.0 (stable) to 1.0 (highly volatile)
+    conflicting_reports_score: float  # 0.0 (no conflicts) to 1.0 (high conflicts)
+    overall_volatility_score: float  # 0.0 (stable) to 1.0 (highly volatile)
+    volatility_level: str  # "Low", "Medium", "High"
+    confidence_adjustment_factor: float  # Multiplier for shrinking to midpoint (0.0 to 1.0)
+    midpoint_shrinkage_amount: float  # How much to shrink towards 50%
+    detailed_analysis: str  # LLM's detailed analysis
+
+
+@dataclass
 class EnhancedResearchDossier(ResearchDossier):
     """
-    Extended research dossier that includes cognitive bias analysis and contradiction analysis.
+    Extended research dossier that includes cognitive bias analysis, contradiction analysis,
+    and volatility analysis.
     
-    This enhanced version supports the full bias-aware and contradiction-aware forecasting pipeline
-    by including systematic bias detection, correction recommendations, and contradiction resolution.
+    This enhanced version supports the full bias-aware, contradiction-aware, and volatility-adjusted
+    forecasting pipeline by including systematic bias detection, correction recommendations,
+    contradiction resolution, and information environment volatility assessment.
     """
     bias_analysis: Optional[BiasAnalysisResult] = None
     contradiction_analysis: Optional["ContradictionAnalysisResult"] = None
+    volatility_analysis: Optional[VolatilityAnalysisResult] = None

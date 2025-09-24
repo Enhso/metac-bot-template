@@ -200,3 +200,15 @@ llms:
       type: enabled
       budget_tokens: 5120
 
+  # Specialized LLM for volatility analysis
+  volatility_analyzer_llm:
+    type: general
+    model: "openrouter/openai/gpt-5"
+    temperature: 1.0
+    timeout: 80
+    allowed_tries: 2
+    max_tokens: 8192
+    thinking:
+      type: enabled
+      budget_tokens: 5120
+
