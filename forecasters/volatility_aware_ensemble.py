@@ -9,7 +9,13 @@ import time
 from typing import List, Optional
 
 from asknews_sdk import AsyncAskNewsSDK
-from forecasting_tools import MetaculusQuestion, ForecastReport
+from forecasting_tools import (
+    MetaculusQuestion, 
+    ForecastReport, 
+    BinaryQuestion, 
+    MultipleChoiceQuestion, 
+    NumericQuestion
+)
 
 from data_models import EnhancedResearchDossier, VolatilityAnalysisResult
 from forecasters.contradiction_aware_ensemble import ContradictionAwareEnsembleForecaster
@@ -221,8 +227,30 @@ class VolatilityAwareEnsembleForecaster(ContradictionAwareEnsembleForecaster):
                 reasoned_prediction, enhanced_dossier
             )
             
-            # Construct final report
-            final_report = self._construct_final_report(question, reasoned_prediction.prediction_value, final_explanation)
+            # Construct the final report object in a type-safe way
+            if isinstance(question, BinaryQuestion):
+                from forecasting_tools.data_models.binary_report import BinaryReport
+                final_report = BinaryReport(
+                    question=question,
+                    prediction=reasoned_prediction.prediction_value,
+                    explanation=final_explanation
+                )
+            elif isinstance(question, MultipleChoiceQuestion):
+                from forecasting_tools.data_models.multiple_choice_report import MultipleChoiceReport
+                final_report = MultipleChoiceReport(
+                    question=question,
+                    prediction=reasoned_prediction.prediction_value,
+                    explanation=final_explanation
+                )
+            elif isinstance(question, NumericQuestion):
+                from forecasting_tools.data_models.numeric_report import NumericReport
+                final_report = NumericReport(
+                    question=question,
+                    prediction=reasoned_prediction.prediction_value,
+                    explanation=final_explanation
+                )
+            else:
+                raise TypeError(f"Unsupported question type for final report construction: {type(question)}")
             
             # Publish if required
             if self.publish_reports_to_metaculus:
@@ -298,7 +326,7 @@ class VolatilityAwareEnsembleForecaster(ContradictionAwareEnsembleForecaster):
         return base_explanation + volatility_section + bias_summary + contradiction_summary
     
     @classmethod
-    def _llm_config_defaults(cls) -> dict[str, str | object | None]:
+    def _llm_config_defaults(cls):
         """
         Returns default LLM configurations including volatility analyzer LLM.
         """
