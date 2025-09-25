@@ -108,51 +108,11 @@ class BiasAwareEnsembleForecaster(EnsembleForecaster):
         """
         Parse the bias analysis text to extract structured information.
         
-        This is a simplified parser - in production could be more sophisticated.
+        This method delegates to the centralized parsing logic in CognitiveBiasChecker
+        to ensure consistent parsing across all bias-aware forecasters.
         """
-        from data_models import BiasAnalysisResult
-        
-        # Simple parsing logic
-        detected_biases = []
-        priority_corrections = []
-        severity_assessment = "Medium"
-        confidence_adjustment_recommended = False
-        
-        # Extract detected biases
-        bias_keywords = [
-            "anchoring", "availability", "confirmation", "overconfidence",
-            "base rate neglect", "representativeness", "recency", "survivorship",
-            "planning fallacy", "attribution"
-        ]
-        
-        text_lower = bias_analysis_text.lower()
-        for bias in bias_keywords:
-            if bias in text_lower:
-                detected_biases.append(bias.title() + " Bias")
-        
-        # Determine severity
-        if "high" in text_lower and "risk" in text_lower:
-            severity_assessment = "High"
-        elif "low" in text_lower and "risk" in text_lower:
-            severity_assessment = "Low"
-        
-        # Check for confidence adjustment recommendations
-        if any(phrase in text_lower for phrase in ["adjust confidence", "recalibrate", "less certain", "more uncertain"]):
-            confidence_adjustment_recommended = True
-        
-        # Priority corrections
-        if "critical biases" in text_lower or "priority" in text_lower:
-            priority_corrections = detected_biases[:2]
-        
-        return BiasAnalysisResult(
-            question=question,
-            analyzed_rationale=analyzed_rationale,
-            bias_analysis_text=bias_analysis_text,
-            detected_biases=detected_biases,
-            severity_assessment=severity_assessment,
-            priority_corrections=priority_corrections,
-            confidence_adjustment_recommended=confidence_adjustment_recommended
-        )
+        from cognitive_bias_checker import CognitiveBiasChecker
+        return CognitiveBiasChecker.parse_analysis_text(question, analyzed_rationale, bias_analysis_text)
 
     async def _run_individual_question(self, question: MetaculusQuestion) -> ForecastReport:
         """

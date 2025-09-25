@@ -12,6 +12,7 @@ from typing import Optional, Callable
 from datetime import datetime
 
 from forecasting_tools import clean_indents, MetaculusQuestion
+from data_models import BiasAnalysisResult
 
 
 class CognitiveBiasChecker:
@@ -197,6 +198,70 @@ class CognitiveBiasChecker:
 
             Produce an updated rationale that demonstrates you have systematically addressed the identified cognitive biases while maintaining the strength of your core arguments.
             """
+        )
+
+    @staticmethod
+    def parse_analysis_text(
+        question: MetaculusQuestion,
+        analyzed_rationale: str,
+        bias_analysis_text: str
+    ) -> BiasAnalysisResult:
+        """
+        Parse the bias analysis text to extract structured information.
+        
+        This centralized method extracts key information from the bias analysis to create
+        a structured result that can be used for further processing. This method is used
+        by both BiasAwareEnsembleForecaster and BiasAwareSelfCritiqueForecaster to ensure
+        consistent parsing logic.
+        
+        Args:
+            question: The MetaculusQuestion being analyzed
+            analyzed_rationale: The original rationale that was analyzed
+            bias_analysis_text: The raw bias analysis text to parse
+            
+        Returns:
+            BiasAnalysisResult with structured information extracted from the text
+        """
+        # Simple parsing - in production, this could be more sophisticated
+        detected_biases = []
+        priority_corrections = []
+        severity_assessment = "Medium"  # Default
+        confidence_adjustment_recommended = False
+        
+        # Extract detected biases (look for bias names in the text)
+        bias_keywords = [
+            "anchoring", "availability", "confirmation", "overconfidence",
+            "base rate neglect", "representativeness", "recency", "survivorship",
+            "planning fallacy", "attribution"
+        ]
+        
+        text_lower = bias_analysis_text.lower()
+        for bias in bias_keywords:
+            if bias in text_lower:
+                detected_biases.append(bias.title() + " Bias")
+        
+        # Check for severity indicators
+        if "high" in text_lower and "risk" in text_lower:
+            severity_assessment = "High"
+        elif "low" in text_lower and "risk" in text_lower:
+            severity_assessment = "Low"
+        
+        # Check for confidence adjustment recommendations
+        if any(phrase in text_lower for phrase in ["adjust confidence", "recalibrate", "less certain", "more uncertain"]):
+            confidence_adjustment_recommended = True
+        
+        # Extract priority corrections (simplified - look for correction section)
+        if "critical biases" in text_lower or "priority" in text_lower:
+            priority_corrections = detected_biases[:2]  # Take top 2 as priority
+        
+        return BiasAnalysisResult(
+            question=question,
+            analyzed_rationale=analyzed_rationale,
+            bias_analysis_text=bias_analysis_text,
+            detected_biases=detected_biases,
+            severity_assessment=severity_assessment,
+            priority_corrections=priority_corrections,
+            confidence_adjustment_recommended=confidence_adjustment_recommended
         )
 
 
