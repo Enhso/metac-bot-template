@@ -212,3 +212,13 @@ llms:
       type: enabled
       budget_tokens: 5120
 
+  bias_checker_llm:
+      type: general
+      model: "openrouter/anthropic/claude-opus-4.1"
+      temperature: 1.0
+      timeout: 80
+      allowed_tries: 2
+      max_tokens: 8192
+      thinking:
+      type: enabled
+      budget_tokens: 5120
