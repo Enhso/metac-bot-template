@@ -12,49 +12,49 @@ bot:
 llms:
   default:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 1024
 
   initial_pred_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   critique_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   refined_pred_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   keyword_extractor_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-V3.1"
+    model: "openrouter/deepseek/deepseek-chat-v3.1:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 1024
 
   summarizer:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-V3.1"
+    model: "openrouter/deepseek/deepseek-chat-v3.1:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 4096
 
   parser:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-V3.1"
+    model: "openrouter/deepseek/deepseek-chat-v3.1:free"
     max_tokens: 2048
 
   researcher: "asknews/deep-research/high-depth"
@@ -62,70 +62,70 @@ llms:
   # Per-persona LLM assignments for maximum cognitive diversity
   persona_skeptic_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   persona_proponent_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   persona_quant_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   persona_contrarian_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   persona_systems_thinker_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   persona_red_team_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   persona_historian_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   persona_technologist_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   persona_behavioral_economist_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   persona_geopolitical_strategist_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
@@ -133,7 +133,7 @@ llms:
   # Specialized LLM for contradictory information analysis
   contradiction_analyzer_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
@@ -141,14 +141,14 @@ llms:
   # Specialized LLM for volatility analysis
   volatility_analyzer_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
 
   bias_checker_llm:
     type: general
-    model: "openrouter/deepseek-ai/DeepSeek-R1-0528"
+    model: "openrouter/deepseek/deepseek-r1-0528:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 8192
