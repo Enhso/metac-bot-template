@@ -26,6 +26,7 @@ from critique_strategy import CritiqueAndRefineStrategy
 from data_models import EnhancedResearchDossier
 from dossier_generator import DossierGenerator, DossierGenerationConfig
 from forecasters.ensemble import EnsembleForecaster
+from prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -188,104 +189,15 @@ class CompositionBasedEnsembleForecaster(EnsembleForecaster):
         This method builds an appropriate prompt based on what analysis was performed
         and applies it to generate persona-specific predictions.
         """
-        # Build prompt based on available analysis
-        prompt = self._build_enhanced_persona_prompt(enhanced_dossier, persona_prompt)
+        # Use consolidated PromptBuilder for prompt generation
+        prompt_builder = PromptBuilder(enhanced_dossier.question)
+        prompt = prompt_builder.build_enhanced_persona_prompt(enhanced_dossier, persona_prompt)
         
         # Generate prediction using the appropriate persona LLM
         persona_llm = self._get_persona_llm_for_prompt(persona_prompt)
         prediction = await self.get_llm(persona_llm, "llm").invoke(prompt)
         
         return prediction
-    
-    def _build_enhanced_persona_prompt(
-        self,
-        enhanced_dossier: EnhancedResearchDossier,
-        persona_prompt: str
-    ) -> str:
-        """
-        Build a persona prompt that incorporates all available analysis enhancements.
-        """
-        # Start with base research information
-        base_prompt = f"""
-        You are a superforecaster producing a prediction with enhanced analytical awareness.
-
-        {persona_prompt}
-
-        Today is {time.strftime("%Y-%m-%d")}
-
-        ## Question
-        {enhanced_dossier.question.question_text}
-
-        ## Background
-        {enhanced_dossier.question.background_info}
-
-        ## Resolution Criteria
-        {enhanced_dossier.question.resolution_criteria}
-
-        ## Research Analysis
-        ### Initial Research
-        {enhanced_dossier.initial_research}
-
-        ### Initial Prediction
-        {enhanced_dossier.initial_prediction_text}
-
-        ### Adversarial Critique
-        {enhanced_dossier.critique_text}
-
-        ### Targeted Research
-        {enhanced_dossier.targeted_research}
-        """
-        
-        # Add bias analysis if available
-        if enhanced_dossier.bias_analysis:
-            base_prompt += f"""
-        
-        ### Cognitive Bias Analysis
-        **Detected Biases:** {', '.join(enhanced_dossier.bias_analysis.detected_biases) if enhanced_dossier.bias_analysis.detected_biases else 'None significant'}
-        **Severity:** {enhanced_dossier.bias_analysis.severity_assessment}
-        **Priority Corrections:** {'; '.join(enhanced_dossier.bias_analysis.priority_corrections)}
-        **Confidence Adjustment Recommended:** {enhanced_dossier.bias_analysis.confidence_adjustment_recommended}
-        """
-        
-        # Add contradiction analysis if available
-        if enhanced_dossier.contradiction_analysis:
-            contradiction_info = enhanced_dossier.contradiction_analysis
-            base_prompt += f"""
-        
-        ### Contradictory Information Analysis
-        **Detected Contradictions:** {len(contradiction_info.detected_contradictions)}
-        **Irresolvable Conflicts:** {len(contradiction_info.irresolvable_conflicts)}
-        **Overall Coherence:** {contradiction_info.overall_coherence_assessment}
-        """
-        
-        # Add volatility analysis if available
-        if enhanced_dossier.volatility_analysis:
-            volatility_info = enhanced_dossier.volatility_analysis
-            base_prompt += f"""
-        
-        ### Information Volatility Analysis
-        **Volatility Level:** {volatility_info.volatility_level}
-        **Overall Score:** {volatility_info.overall_volatility_score:.2f}/1.0
-        **Confidence Adjustment Factor:** {volatility_info.confidence_adjustment_factor:.2f}
-        **Recommended Shrinkage:** {volatility_info.midpoint_shrinkage_amount:.0%} towards midpoint
-        """
-        
-        # Add synthesis instructions
-        base_prompt += """
-        
-        ## Your Enhanced Forecasting Task
-        
-        Integrate all the analysis above to produce a well-reasoned forecast that:
-        1. Addresses any identified cognitive biases with appropriate corrections
-        2. Accounts for contradictory information and unresolved conflicts
-        3. Adjusts confidence based on information environment volatility
-        4. Provides clear reasoning for your final prediction
-        
-        Focus on producing a robust forecast that acknowledges uncertainties and incorporates
-        the systematic analysis performed above.
-        """
-        
-        return base_prompt
     
     def _get_persona_llm_for_prompt(self, persona_prompt: str) -> str:
         """Get the appropriate LLM name for a persona prompt."""
@@ -315,9 +227,10 @@ class CompositionBasedEnsembleForecaster(EnsembleForecaster):
         
         combined_reports = "\n\n".join(report_texts)
         
-        # Build synthesis prompt that incorporates all analysis
-        synthesis_prompt = self._build_enhanced_synthesis_prompt(
-            question, combined_reports, enhanced_dossier
+        # Use consolidated PromptBuilder for prompt generation
+        prompt_builder = PromptBuilder(question)
+        synthesis_prompt = prompt_builder.build_enhanced_synthesis_prompt(
+            combined_reports, enhanced_dossier
         )
         
         # Generate final synthesis
@@ -325,80 +238,6 @@ class CompositionBasedEnsembleForecaster(EnsembleForecaster):
         prediction = self._parse_final_prediction(question, final_reasoning)
         
         return ReasonedPrediction(prediction_value=prediction, reasoning=final_reasoning)
-    
-    def _build_enhanced_synthesis_prompt(
-        self,
-        question: MetaculusQuestion,
-        combined_reports: str,
-        enhanced_dossier: EnhancedResearchDossier
-    ) -> str:
-        """Build synthesis prompt that incorporates all available analysis."""
-        
-        # Build analysis context
-        analysis_context = ""
-        
-        if enhanced_dossier.bias_analysis:
-            analysis_context += f"""
-            
-            ## Cognitive Bias Analysis Context
-            Detected biases: {', '.join(enhanced_dossier.bias_analysis.detected_biases) if enhanced_dossier.bias_analysis.detected_biases else 'None significant'}
-            Severity: {enhanced_dossier.bias_analysis.severity_assessment}
-            Confidence adjustment recommended: {enhanced_dossier.bias_analysis.confidence_adjustment_recommended}
-            """
-        
-        if enhanced_dossier.contradiction_analysis:
-            contradiction_info = enhanced_dossier.contradiction_analysis
-            analysis_context += f"""
-            
-            ## Contradiction Analysis Context
-            Detected contradictions: {len(contradiction_info.detected_contradictions)}
-            Irresolvable conflicts: {len(contradiction_info.irresolvable_conflicts)}
-            Overall coherence: {contradiction_info.overall_coherence_assessment}
-            """
-        
-        if enhanced_dossier.volatility_analysis:
-            volatility_info = enhanced_dossier.volatility_analysis
-            analysis_context += f"""
-            
-            ## Volatility Analysis Context
-            Information volatility level: {volatility_info.volatility_level}
-            Confidence adjustment factor: {volatility_info.confidence_adjustment_factor:.2f}
-            Recommended shrinkage: {volatility_info.midpoint_shrinkage_amount:.0%} towards midpoint
-            """
-        
-        from forecasting_tools import clean_indents
-        
-        return clean_indents(f"""
-            You are a lead superforecaster responsible for producing a final, definitive forecast 
-            from comprehensive enhanced analysis. You have received analyses from multiple expert 
-            analysts that have been enhanced with systematic analysis steps.
-
-            Your task is to synthesize their enhanced reports, account for all analytical 
-            enhancements, and produce a single, coherent final rationale and prediction.
-
-            ## The Question
-            {question.question_text}
-
-            ## Enhanced Analyst Reports
-            {combined_reports}{analysis_context}
-
-            ## Your Enhanced Synthesis Task
-
-            Integrate all analysis components above into a final prediction that accounts for:
-            1. Cognitive bias corrections and confidence adjustments
-            2. Contradictory information and its impact on uncertainty  
-            3. Information environment volatility and confidence shrinkage
-            4. The diverse perspectives from the analyst team
-
-            ### Synthesis Steps:
-            1. **Evidence Integration**: Synthesize insights while addressing identified biases
-            2. **Contradiction Resolution**: Acknowledge unresolved conflicts as key uncertainties
-            3. **Volatility Adjustment**: Apply appropriate confidence adjustments for volatility
-            4. **Final Prediction**: Provide a robust forecast with clear reasoning
-
-            Produce your final forecast with explicit acknowledgment of the enhanced analytical 
-            process and how it affected your reasoning and confidence levels.
-        """)
 
 
 # Factory functions for common configurations

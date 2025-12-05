@@ -32,6 +32,7 @@ from data_models import ResearchDossier, EnhancedResearchDossier
 from contradictory_information_analyzer import ContradictionAnalysisResult
 from forecasting_prompts import PERSONAS as ENSEMBLE_PERSONAS
 from forecasters.bias_aware_ensemble import BiasAwareEnsembleForecaster
+from prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -227,8 +228,9 @@ class ContradictionAwareEnsembleForecaster(BiasAwareEnsembleForecaster):
         """
         Generate a prediction that is aware of both cognitive biases and contradictory information.
         """
-        # Build enhanced prompt that includes both bias and contradiction awareness
-        enhanced_prompt = self._build_contradiction_aware_prompt(
+        # Use consolidated PromptBuilder for prompt generation
+        prompt_builder = PromptBuilder(enhanced_dossier.question)
+        enhanced_prompt = prompt_builder.build_contradiction_aware_persona_prompt(
             enhanced_dossier, persona_prompt
         )
         
@@ -237,155 +239,14 @@ class ContradictionAwareEnsembleForecaster(BiasAwareEnsembleForecaster):
         
         return refined_prediction_text
 
-    def _build_contradiction_aware_prompt(
-        self,
-        enhanced_dossier: EnhancedResearchDossier,
-        persona_prompt: str
-    ) -> str:
-        """
-        Build a prompt that incorporates awareness of both biases and contradictions.
-        """
-        # Build base information
-        final_answer_format_instruction = self._get_final_answer_format_instruction(enhanced_dossier.question)
-        
-        # Build bias awareness section
-        bias_section = ""
-        if enhanced_dossier.bias_analysis:
-            bias_section = f"""
-            ## Cognitive Bias Analysis
-            {enhanced_dossier.bias_analysis.bias_analysis_text}
-            """
-        
-        # Build contradiction awareness section
-        contradiction_section = ""
-        if enhanced_dossier.contradiction_analysis:
-            contradiction_info = enhanced_dossier.contradiction_analysis
-            contradiction_section = f"""
-            ## Contradictory Information Analysis
-            
-            **Overall Coherence Assessment:** {contradiction_info.overall_coherence_assessment}
-            
-            **Detected Contradictions:** {len(contradiction_info.detected_contradictions)}
-            """
-            
-            if contradiction_info.detected_contradictions:
-                contradiction_section += "\n**Key Contradictions:**\n"
-                for i, contradiction in enumerate(contradiction_info.detected_contradictions[:3], 1):
-                    contradiction_section += f"{i}. {contradiction.get('description', 'No description')} (Severity: {contradiction.get('severity', 'Unknown')})\n"
-            
-            if contradiction_info.irresolvable_conflicts:
-                contradiction_section += f"\n**Irresolvable Conflicts:** {len(contradiction_info.irresolvable_conflicts)}\n"
-                for conflict in contradiction_info.irresolvable_conflicts[:2]:
-                    contradiction_section += f"- {conflict.get('description', 'No description')}\n"
-            
-            if contradiction_info.key_uncertainties:
-                contradiction_section += f"\n**Key Uncertainties:**\n"
-                for uncertainty in contradiction_info.key_uncertainties[:3]:
-                    contradiction_section += f"- {uncertainty}\n"
-            
-            contradiction_section += f"\n**Confidence Impact:** {contradiction_info.confidence_impact}"
-        
-        return clean_indents(
-            f"""
-            You are a superforecaster producing a final, synthesized prediction that explicitly accounts for both cognitive biases and contradictory information.
-
-            {persona_prompt}
-
-            Today is {time.strftime("%Y-%m-%d")}
-
-            ## Question
-            {enhanced_dossier.question.question_text}
-
-            ## Background
-            {enhanced_dossier.question.background_info}
-
-            ## Resolution Criteria
-            {enhanced_dossier.question.resolution_criteria}
-
-            ## Comprehensive Analysis Dossier
-            ### 1. Initial Research
-            {enhanced_dossier.initial_research}
-
-            ### 2. Initial Prediction (Thesis)
-            {enhanced_dossier.initial_prediction_text}
-
-            ### 3. Adversarial Critique (Antithesis)
-            {enhanced_dossier.critique_text}
-
-            ### 4. Targeted Research (Additional Evidence)
-            {enhanced_dossier.targeted_research}{bias_section}{contradiction_section}
-
-            ## Your Enhanced Synthesis Task
-            
-            Integrate all analysis components above into a final prediction that accounts for both cognitive biases and contradictory information. Pay special attention to:
-            1. The cognitive bias analysis and recommended corrections
-            2. The contradictory information analysis and its impact on confidence
-            3. How conflicting evidence affects your reasoning
-            4. Key uncertainties that remain unresolved
-
-            ### Step 1: Bias and Contradiction-Aware Evidence Integration
-            - Synthesize the research while addressing both identified biases and contradictions
-            - Apply specific correction strategies from the bias analysis
-            - Account for conflicting evidence and its resolution status
-            - Recalibrate confidence based on both bias and contradiction assessments
-
-            ### Step 2: Systematic Issue Mitigation
-            - Demonstrate how you are avoiding or correcting each identified bias
-            - Explain how you are handling contradictory information
-            - Show alternative perspectives you are considering
-            - Acknowledge remaining uncertainties and conflicts
-
-            ### Step 3: Final Enhanced Rationale
-            - Present your comprehensive reasoning that accounts for all analysis components
-            - Explicitly note areas of uncertainty from both biases and contradictions
-            - Justify your probability assessment with reference to both types of mitigation
-
-            ### Step 4: Calibrated Final Prediction
-            - State your final prediction in the required format
-            - Include confidence assessment reflecting both bias and contradiction analysis
-
-            **Required Output Format:**
-            **Step 1: Enhanced Evidence Integration**
-            [Your synthesis accounting for both bias and contradiction corrections]
-
-            **Step 2: Systematic Issue Mitigation**
-            [How you addressed biases and handled contradictions]
-
-            **Step 3: Final Enhanced Rationale**
-            [Your comprehensive reasoning with full awareness]
-
-            **Step 4: Calibrated Final Prediction**
-            {final_answer_format_instruction}
-            [Brief confidence note about bias and contradiction mitigation]
-            """
-        )
-
     def _get_final_answer_format_instruction(self, question: MetaculusQuestion) -> str:
-        """Get the final answer format instruction for a question."""
-        if isinstance(question, MultipleChoiceQuestion):
-            return f"""
-                - For the multiple choice question, list each option with its probability. You MUST use the exact option text provided. All probabilities must be between 0.1% and 99.9% and sum to 1.0.
-                  Example:
-                  "0 or 1": 10%
-                  "2 or 3": 70%
-                  "4 or more": 20%
-                  The options for this question are: {question.options}
-            """
-        elif isinstance(question, NumericQuestion):
-            return """
-                - For the numeric question, provide the requested percentiles. You MUST ensure the values are in strictly increasing order (10th percentile < 20th < 40th, etc.). Values must be increasing by no more than a factor of 0.59 at every step
-                  Example:
-                  Percentile 10: 115
-                  Percentile 20: 118
-                  Percentile 40: 122
-                  Percentile 60: 126
-                  Percentile 80: 130
-                  Percentile 90: 135
-            """
-        else:  # BinaryQuestion
-            return """
-                - For the binary question: "Probability: ZZ%". All probabilities must be between 0.1% and 99.9%.
-            """
+        """
+        Get the final answer format instruction for a question.
+        
+        Delegates to PromptBuilder for centralized format instruction handling.
+        """
+        prompt_builder = PromptBuilder(question)
+        return prompt_builder.get_detailed_final_answer_format_instruction()
 
     async def _synthesize_contradiction_aware_ensemble_forecasts(
         self, 

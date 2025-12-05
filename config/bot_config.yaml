@@ -40,21 +40,21 @@ llms:
 
   keyword_extractor_llm:
     type: general
-    model: "openrouter/google/gemma-3-27b-it:free"
+    model: "openrouter/openai/gpt-oss-20b:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 1024
 
   summarizer:
     type: general
-    model: "openrouter/google/gemma-3-27b-it:free"
+    model: "openrouter/openai/gpt-oss-20b:free"
     timeout: 80
     allowed_tries: 2
     max_tokens: 4096
 
   parser:
     type: general
-    model: "openrouter/google/gemma-3-27b-it:free"
+    model: "openrouter/openai/gpt-oss-20b:free"
     max_tokens: 2048
 
   researcher: "asknews/deep-research/high-depth"

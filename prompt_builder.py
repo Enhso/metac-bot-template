@@ -4,12 +4,21 @@ PromptBuilder: Consolidated dynamic prompt generation for the forecasting system
 This module consolidates all prompt generation logic that was previously scattered
 across various forecaster classes. The PromptBuilder dynamically constructs prompts
 based on the available analyses in the research dossier.
+
+All forecaster classes should delegate prompt construction exclusively to this module
+to ensure consistency, maintainability, and DRY compliance.
+
+Supported prompt types:
+- Synthesis prompts: For synthesizing ensemble predictions
+- Persona prompts: For individual persona analysis  
+- Contradiction-aware prompts: For contradiction-aware ensemble forecasting
+- Volatility-aware prompts: For volatility-aware ensemble forecasting
 """
 
 import time
 from typing import Optional, TYPE_CHECKING
 
-from forecasting_tools import clean_indents, MetaculusQuestion
+from forecasting_tools import clean_indents, MetaculusQuestion, BinaryQuestion, NumericQuestion, MultipleChoiceQuestion
 from data_models import EnhancedResearchDossier, BiasAnalysisResult, VolatilityAnalysisResult
 
 if TYPE_CHECKING:
@@ -371,6 +380,435 @@ class PromptBuilder:
             return "Selected Option: [Your chosen option exactly as listed]"
         else:
             return "Prediction: [Your prediction in the appropriate format]"
+    
+    def get_detailed_final_answer_format_instruction(self) -> str:
+        """
+        Get detailed final answer format instruction for forecaster prompts.
+        
+        This provides more detailed instructions than the simple format instruction,
+        matching the format previously used in forecaster classes.
+        """
+        if isinstance(self.question, MultipleChoiceQuestion):
+            return f"""
+                - For the multiple choice question, list each option with its probability. You MUST use the exact option text provided. All probabilities must be between 0.1% and 99.9% and sum to 1.0.
+                  Example:
+                  "0 or 1": 10%
+                  "2 or 3": 70%
+                  "4 or more": 20%
+                  The options for this question are: {self.question.options}
+            """
+        elif isinstance(self.question, NumericQuestion):
+            return """
+                - For the numeric question, provide the requested percentiles. You MUST ensure the values are in strictly increasing order (10th percentile < 20th < 40th, etc.). Values must be increasing by no more than a factor of 0.59 at every step
+                  Example:
+                  Percentile 10: 115
+                  Percentile 20: 118
+                  Percentile 40: 122
+                  Percentile 60: 126
+                  Percentile 80: 130
+                  Percentile 90: 135
+            """
+        else:  # BinaryQuestion or default
+            return """
+                - For the binary question: "Probability: ZZ%". All probabilities must be between 0.1% and 99.9%.
+            """
+    
+    def build_contradiction_aware_persona_prompt(
+        self,
+        enhanced_dossier: EnhancedResearchDossier,
+        persona_prompt: str
+    ) -> str:
+        """
+        Build a persona prompt that incorporates awareness of both biases and contradictions.
+        
+        This method consolidates the prompt generation logic that was previously
+        duplicated in ContradictionAwareEnsembleForecaster._build_contradiction_aware_prompt.
+        
+        Args:
+            enhanced_dossier: Research dossier with optional analysis components
+            persona_prompt: The specific persona instructions
+            
+        Returns:
+            Complete persona prompt with bias and contradiction awareness
+        """
+        # Get detailed format instruction for the question type
+        final_answer_format_instruction = self.get_detailed_final_answer_format_instruction()
+        
+        # Build bias awareness section
+        bias_section = ""
+        if enhanced_dossier.bias_analysis:
+            bias_section = f"""
+            ## Cognitive Bias Analysis
+            {enhanced_dossier.bias_analysis.bias_analysis_text}
+            """
+        
+        # Build contradiction awareness section
+        contradiction_section = ""
+        if enhanced_dossier.contradiction_analysis:
+            contradiction_section = self._build_detailed_contradiction_section(
+                enhanced_dossier.contradiction_analysis
+            )
+        
+        return clean_indents(
+            f"""
+            You are a superforecaster producing a final, synthesized prediction that explicitly accounts for both cognitive biases and contradictory information.
+
+            {persona_prompt}
+
+            Today is {time.strftime("%Y-%m-%d")}
+
+            ## Question
+            {enhanced_dossier.question.question_text}
+
+            ## Background
+            {enhanced_dossier.question.background_info}
+
+            ## Resolution Criteria
+            {enhanced_dossier.question.resolution_criteria}
+
+            ## Comprehensive Analysis Dossier
+            ### 1. Initial Research
+            {enhanced_dossier.initial_research}
+
+            ### 2. Initial Prediction (Thesis)
+            {enhanced_dossier.initial_prediction_text}
+
+            ### 3. Adversarial Critique (Antithesis)
+            {enhanced_dossier.critique_text}
+
+            ### 4. Targeted Research (Additional Evidence)
+            {enhanced_dossier.targeted_research}{bias_section}{contradiction_section}
+
+            ## Your Enhanced Synthesis Task
+            
+            Integrate all analysis components above into a final prediction that accounts for both cognitive biases and contradictory information. Pay special attention to:
+            1. The cognitive bias analysis and recommended corrections
+            2. The contradictory information analysis and its impact on confidence
+            3. How conflicting evidence affects your reasoning
+            4. Key uncertainties that remain unresolved
+
+            ### Step 1: Bias and Contradiction-Aware Evidence Integration
+            - Synthesize the research while addressing both identified biases and contradictions
+            - Apply specific correction strategies from the bias analysis
+            - Account for conflicting evidence and its resolution status
+            - Recalibrate confidence based on both bias and contradiction assessments
+
+            ### Step 2: Systematic Issue Mitigation
+            - Demonstrate how you are avoiding or correcting each identified bias
+            - Explain how you are handling contradictory information
+            - Show alternative perspectives you are considering
+            - Acknowledge remaining uncertainties and conflicts
+
+            ### Step 3: Final Enhanced Rationale
+            - Present your comprehensive reasoning that accounts for all analysis components
+            - Explicitly note areas of uncertainty from both biases and contradictions
+            - Justify your probability assessment with reference to both types of mitigation
+
+            ### Step 4: Calibrated Final Prediction
+            - State your final prediction in the required format
+            - Include confidence assessment reflecting both bias and contradiction analysis
+
+            **Required Output Format:**
+            **Step 1: Enhanced Evidence Integration**
+            [Your synthesis accounting for both bias and contradiction corrections]
+
+            **Step 2: Systematic Issue Mitigation**
+            [How you addressed biases and handled contradictions]
+
+            **Step 3: Final Enhanced Rationale**
+            [Your comprehensive reasoning with full awareness]
+
+            **Step 4: Calibrated Final Prediction**
+            {final_answer_format_instruction}
+            [Brief confidence note about bias and contradiction mitigation]
+            """
+        )
+    
+    def _build_detailed_contradiction_section(
+        self,
+        contradiction_analysis: "ContradictionAnalysisResult"
+    ) -> str:
+        """
+        Build detailed contradiction section for persona prompts.
+        
+        This provides the full detail needed for contradiction-aware prompts,
+        including key contradictions, irresolvable conflicts, and uncertainties.
+        """
+        contradiction_section = f"""
+            ## Contradictory Information Analysis
+            
+            **Overall Coherence Assessment:** {contradiction_analysis.overall_coherence_assessment}
+            
+            **Detected Contradictions:** {len(contradiction_analysis.detected_contradictions)}
+            """
+        
+        if contradiction_analysis.detected_contradictions:
+            contradiction_section += "\n**Key Contradictions:**\n"
+            for i, contradiction in enumerate(contradiction_analysis.detected_contradictions[:3], 1):
+                contradiction_section += f"{i}. {contradiction.get('description', 'No description')} (Severity: {contradiction.get('severity', 'Unknown')})\n"
+        
+        if contradiction_analysis.irresolvable_conflicts:
+            contradiction_section += f"\n**Irresolvable Conflicts:** {len(contradiction_analysis.irresolvable_conflicts)}\n"
+            for conflict in contradiction_analysis.irresolvable_conflicts[:2]:
+                contradiction_section += f"- {conflict.get('description', 'No description')}\n"
+        
+        if contradiction_analysis.key_uncertainties:
+            contradiction_section += f"\n**Key Uncertainties:**\n"
+            for uncertainty in contradiction_analysis.key_uncertainties[:3]:
+                contradiction_section += f"- {uncertainty}\n"
+        
+        contradiction_section += f"\n**Confidence Impact:** {contradiction_analysis.confidence_impact}"
+        
+        return contradiction_section
+    
+    def build_volatility_aware_persona_prompt(
+        self,
+        enhanced_dossier: EnhancedResearchDossier,
+        persona_prompt: str
+    ) -> str:
+        """
+        Build a persona prompt that incorporates awareness of biases, contradictions, AND volatility.
+        
+        This method consolidates the prompt generation logic that was previously
+        duplicated in VolatilityAwareEnsembleForecaster._build_volatility_aware_prompt.
+        
+        Args:
+            enhanced_dossier: Research dossier with optional analysis components
+            persona_prompt: The specific persona instructions
+            
+        Returns:
+            Complete persona prompt with bias, contradiction, and volatility awareness
+        """
+        # Start with the contradiction-aware prompt
+        base_prompt = self.build_contradiction_aware_persona_prompt(enhanced_dossier, persona_prompt)
+        
+        # Add volatility section if present
+        if enhanced_dossier.volatility_analysis:
+            volatility_info = enhanced_dossier.volatility_analysis
+            volatility_section = f"""
+            
+            ### 5. Information Environment Volatility Analysis
+            **Volatility Level:** {volatility_info.volatility_level}
+            **Overall Volatility Score:** {volatility_info.overall_volatility_score:.2f}/1.0
+            **News Volume Analyzed:** {volatility_info.news_volume} articles
+            **Sentiment Volatility:** {volatility_info.sentiment_volatility:.2f}/1.0
+            **Conflicting Reports Score:** {volatility_info.conflicting_reports_score:.2f}/1.0
+            **Keywords Analyzed:** {', '.join(volatility_info.analyzed_keywords)}
+            
+            **Volatility Analysis:**
+            {volatility_info.detailed_analysis}
+            
+            **Recommended Confidence Adjustment:**
+            Due to {volatility_info.volatility_level.lower()} information volatility, consider adjusting 
+            prediction confidence. The analysis suggests shrinking predictions by 
+            {volatility_info.midpoint_shrinkage_amount:.0%} towards the midpoint (50%) to account for 
+            the unstable information environment."""
+            
+            # Insert volatility section before the synthesis task
+            if "## Your Enhanced Synthesis Task" in base_prompt:
+                parts = base_prompt.split("## Your Enhanced Synthesis Task", 1)
+                base_prompt = (parts[0] + volatility_section + "\n\n## Your Enhanced Synthesis Task" + 
+                             parts[1] if len(parts) == 2 else base_prompt + volatility_section)
+            else:
+                base_prompt = base_prompt + volatility_section
+            
+            # Update synthesis instructions to include volatility awareness
+            base_prompt = base_prompt.replace(
+                "Integrate all analysis components above into a final prediction that accounts for both cognitive biases and contradictory information.",
+                "Integrate all analysis components above into a final prediction that accounts for cognitive biases, contradictory information, AND information environment volatility."
+            )
+            
+            # Add volatility awareness to the steps
+            if "### Step 1: Bias and Contradiction-Aware Evidence Integration" in base_prompt:
+                base_prompt = base_prompt.replace(
+                    "### Step 1: Bias and Contradiction-Aware Evidence Integration\n            - Synthesize the research while addressing both identified biases and contradictions",
+                    "### Step 1: Bias, Contradiction, and Volatility-Aware Evidence Integration\n            - Synthesize the research while addressing identified biases, contradictions, and volatility indicators"
+                )
+        
+        return base_prompt
+    
+    def build_enhanced_persona_prompt(
+        self,
+        enhanced_dossier: EnhancedResearchDossier,
+        persona_prompt: str
+    ) -> str:
+        """
+        Build an enhanced persona prompt that dynamically incorporates all available analyses.
+        
+        This is a more flexible version used by CompositionBasedEnsembleForecaster
+        that adapts based on which analyses are present in the dossier.
+        
+        Args:
+            enhanced_dossier: Research dossier with optional analysis components
+            persona_prompt: The specific persona instructions
+            
+        Returns:
+            Complete persona prompt with all relevant analysis sections
+        """
+        # Start with base research information
+        base_prompt = f"""
+        You are a superforecaster producing a prediction with enhanced analytical awareness.
+
+        {persona_prompt}
+
+        Today is {time.strftime("%Y-%m-%d")}
+
+        ## Question
+        {enhanced_dossier.question.question_text}
+
+        ## Background
+        {enhanced_dossier.question.background_info}
+
+        ## Resolution Criteria
+        {enhanced_dossier.question.resolution_criteria}
+
+        ## Research Analysis
+        ### Initial Research
+        {enhanced_dossier.initial_research}
+
+        ### Initial Prediction
+        {enhanced_dossier.initial_prediction_text}
+
+        ### Adversarial Critique
+        {enhanced_dossier.critique_text}
+
+        ### Targeted Research
+        {enhanced_dossier.targeted_research}
+        """
+        
+        # Add bias analysis if available
+        if enhanced_dossier.bias_analysis:
+            base_prompt += f"""
+        
+        ### Cognitive Bias Analysis
+        **Detected Biases:** {', '.join(enhanced_dossier.bias_analysis.detected_biases) if enhanced_dossier.bias_analysis.detected_biases else 'None significant'}
+        **Severity:** {enhanced_dossier.bias_analysis.severity_assessment}
+        **Priority Corrections:** {'; '.join(enhanced_dossier.bias_analysis.priority_corrections)}
+        **Confidence Adjustment Recommended:** {enhanced_dossier.bias_analysis.confidence_adjustment_recommended}
+        """
+        
+        # Add contradiction analysis if available
+        if enhanced_dossier.contradiction_analysis:
+            contradiction_info = enhanced_dossier.contradiction_analysis
+            base_prompt += f"""
+        
+        ### Contradictory Information Analysis
+        **Detected Contradictions:** {len(contradiction_info.detected_contradictions)}
+        **Irresolvable Conflicts:** {len(contradiction_info.irresolvable_conflicts)}
+        **Overall Coherence:** {contradiction_info.overall_coherence_assessment}
+        """
+        
+        # Add volatility analysis if available
+        if enhanced_dossier.volatility_analysis:
+            volatility_info = enhanced_dossier.volatility_analysis
+            base_prompt += f"""
+        
+        ### Information Volatility Analysis
+        **Volatility Level:** {volatility_info.volatility_level}
+        **Overall Score:** {volatility_info.overall_volatility_score:.2f}/1.0
+        **Confidence Adjustment Factor:** {volatility_info.confidence_adjustment_factor:.2f}
+        **Recommended Shrinkage:** {volatility_info.midpoint_shrinkage_amount:.0%} towards midpoint
+        """
+        
+        # Add synthesis instructions
+        base_prompt += """
+        
+        ## Your Enhanced Forecasting Task
+        
+        Integrate all the analysis above to produce a well-reasoned forecast that:
+        1. Addresses any identified cognitive biases with appropriate corrections
+        2. Accounts for contradictory information and unresolved conflicts
+        3. Adjusts confidence based on information environment volatility
+        4. Provides clear reasoning for your final prediction
+        
+        Focus on producing a robust forecast that acknowledges uncertainties and incorporates
+        the systematic analysis performed above.
+        """
+        
+        return base_prompt
+    
+    def build_enhanced_synthesis_prompt(
+        self,
+        combined_reports: str,
+        enhanced_dossier: EnhancedResearchDossier,
+        final_answer_format_instruction: Optional[str] = None
+    ) -> str:
+        """
+        Build enhanced synthesis prompt that incorporates all available analysis.
+        
+        This is used by CompositionBasedEnsembleForecaster for the final synthesis step.
+        
+        Args:
+            combined_reports: Combined persona analysis reports
+            enhanced_dossier: Research dossier with optional analysis components
+            final_answer_format_instruction: Optional format instruction override
+            
+        Returns:
+            Complete synthesis prompt with all relevant analysis context
+        """
+        # Build analysis context based on what's available
+        analysis_context = ""
+        
+        if enhanced_dossier.bias_analysis:
+            analysis_context += f"""
+            
+            ## Cognitive Bias Analysis Context
+            Detected biases: {', '.join(enhanced_dossier.bias_analysis.detected_biases) if enhanced_dossier.bias_analysis.detected_biases else 'None significant'}
+            Severity: {enhanced_dossier.bias_analysis.severity_assessment}
+            Confidence adjustment recommended: {enhanced_dossier.bias_analysis.confidence_adjustment_recommended}
+            """
+        
+        if enhanced_dossier.contradiction_analysis:
+            contradiction_info = enhanced_dossier.contradiction_analysis
+            analysis_context += f"""
+            
+            ## Contradiction Analysis Context
+            Detected contradictions: {len(contradiction_info.detected_contradictions)}
+            Irresolvable conflicts: {len(contradiction_info.irresolvable_conflicts)}
+            Overall coherence: {contradiction_info.overall_coherence_assessment}
+            """
+        
+        if enhanced_dossier.volatility_analysis:
+            volatility_info = enhanced_dossier.volatility_analysis
+            analysis_context += f"""
+            
+            ## Volatility Analysis Context
+            Information volatility level: {volatility_info.volatility_level}
+            Confidence adjustment factor: {volatility_info.confidence_adjustment_factor:.2f}
+            Recommended shrinkage: {volatility_info.midpoint_shrinkage_amount:.0%} towards midpoint
+            """
+        
+        return clean_indents(f"""
+            You are a lead superforecaster responsible for producing a final, definitive forecast 
+            from comprehensive enhanced analysis. You have received analyses from multiple expert 
+            analysts that have been enhanced with systematic analysis steps.
+
+            Your task is to synthesize their enhanced reports, account for all analytical 
+            enhancements, and produce a single, coherent final rationale and prediction.
+
+            ## The Question
+            {self.question.question_text}
+
+            ## Enhanced Analyst Reports
+            {combined_reports}{analysis_context}
+
+            ## Your Enhanced Synthesis Task
+
+            Integrate all analysis components above into a final prediction that accounts for:
+            1. Cognitive bias corrections and confidence adjustments
+            2. Contradictory information and its impact on uncertainty  
+            3. Information environment volatility and confidence shrinkage
+            4. The diverse perspectives from the analyst team
+
+            ### Synthesis Steps:
+            1. **Evidence Integration**: Synthesize insights while addressing identified biases
+            2. **Contradiction Resolution**: Acknowledge unresolved conflicts as key uncertainties
+            3. **Volatility Adjustment**: Apply appropriate confidence adjustments for volatility
+            4. **Final Prediction**: Provide a robust forecast with clear reasoning
+
+            Produce your final forecast with explicit acknowledgment of the enhanced analytical 
+            process and how it affected your reasoning and confidence levels.
+        """)
 
 
 class LegacyPromptBuilder:

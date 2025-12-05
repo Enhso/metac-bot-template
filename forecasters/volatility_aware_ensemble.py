@@ -19,6 +19,7 @@ from forecasting_tools import (
 
 from data_models import EnhancedResearchDossier, VolatilityAnalysisResult
 from forecasters.contradiction_aware_ensemble import ContradictionAwareEnsembleForecaster
+from prompt_builder import PromptBuilder
 from volatility_analyzer import VolatilityAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -96,54 +97,11 @@ class VolatilityAwareEnsembleForecaster(ContradictionAwareEnsembleForecaster):
     ) -> str:
         """
         Build a prompt that incorporates awareness of biases, contradictions, AND volatility.
+        
+        Delegates to consolidated PromptBuilder for centralized prompt generation.
         """
-        base_prompt = self._build_contradiction_aware_prompt(enhanced_dossier, persona_prompt)
-        
-        # Add volatility section if present
-        volatility_section = ""
-        if enhanced_dossier.volatility_analysis:
-            volatility_info = enhanced_dossier.volatility_analysis
-            volatility_section = f"""
-            
-            ### 5. Information Environment Volatility Analysis
-            **Volatility Level:** {volatility_info.volatility_level}
-            **Overall Volatility Score:** {volatility_info.overall_volatility_score:.2f}/1.0
-            **News Volume Analyzed:** {volatility_info.news_volume} articles
-            **Sentiment Volatility:** {volatility_info.sentiment_volatility:.2f}/1.0
-            **Conflicting Reports Score:** {volatility_info.conflicting_reports_score:.2f}/1.0
-            **Keywords Analyzed:** {', '.join(volatility_info.analyzed_keywords)}
-            
-            **Volatility Analysis:**
-            {volatility_info.detailed_analysis}
-            
-            **Recommended Confidence Adjustment:**
-            Due to {volatility_info.volatility_level.lower()} information volatility, consider adjusting 
-            prediction confidence. The analysis suggests shrinking predictions by 
-            {volatility_info.midpoint_shrinkage_amount:.0%} towards the midpoint (50%) to account for 
-            the unstable information environment."""
-        
-        # Insert volatility section before the synthesis task
-        if "## Your Enhanced Synthesis Task" in base_prompt:
-            parts = base_prompt.split("## Your Enhanced Synthesis Task", 1)
-            enhanced_prompt = (parts[0] + volatility_section + "\n\n## Your Enhanced Synthesis Task" + 
-                             parts[1] if len(parts) == 2 else base_prompt + volatility_section)
-        else:
-            enhanced_prompt = base_prompt + volatility_section
-        
-        # Update the synthesis instructions to include volatility awareness
-        enhanced_prompt = enhanced_prompt.replace(
-            "Integrate all analysis components above into a final prediction that accounts for both cognitive biases and contradictory information.",
-            "Integrate all analysis components above into a final prediction that accounts for cognitive biases, contradictory information, AND information environment volatility."
-        )
-        
-        # Add volatility awareness to the steps
-        if "### Step 1: Bias and Contradiction-Aware Evidence Integration" in enhanced_prompt:
-            enhanced_prompt = enhanced_prompt.replace(
-                "### Step 1: Bias and Contradiction-Aware Evidence Integration\n        - Synthesize the research while addressing both identified biases and contradictions",
-                "### Step 1: Bias, Contradiction, and Volatility-Aware Evidence Integration\n        - Synthesize the research while addressing identified biases, contradictions, and volatility indicators"
-            )
-        
-        return enhanced_prompt
+        prompt_builder = PromptBuilder(enhanced_dossier.question)
+        return prompt_builder.build_volatility_aware_persona_prompt(enhanced_dossier, persona_prompt)
     
     async def _generate_persona_analysis_with_volatility(
         self,
