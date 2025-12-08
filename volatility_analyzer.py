@@ -161,7 +161,7 @@ class VolatilityAnalyzer:
                 self._logger.info(f"Searching news for: {query}")
                 response = await self._asknews_client.news.search_news(
                     query=query,
-                    n_articles=25,
+                    n_articles=10,
                     return_type="both",
                     method="kw",
                     start_timestamp=int(start_date.timestamp()),

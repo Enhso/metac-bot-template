@@ -129,7 +129,7 @@ class CritiqueAndRefineStrategy:
 
             try:
                 results = await self._asknews_client.news.search_news(
-                    query=keywords, n_articles=3, strategy="news knowledge"
+                    query=keywords, n_articles=10, strategy="news knowledge"
                 )
                 search_results_string = (
                     results.as_string if results.as_string is not None else "No results found."
